@@ -1,0 +1,60 @@
+log_level: INFO
+
+storage:
+  # Database storage configuration
+  storage_path: /qdrant/storage
+  
+  # Write-ahead log configuration
+  wal:
+    wal_capacity_mb: 32
+    wal_segments_ahead: 0
+
+  # Performance settings
+  performance:
+    max_search_threads: 0  # Use all available threads
+    max_optimization_threads: 0
+
+# Service configuration
+service:
+  # HTTP API settings
+  http_port: 6333
+  
+  # gRPC API settings  
+  grpc_port: 6334
+  
+  # Enable CORS for web interfaces
+  enable_cors: true
+
+# Cluster configuration (for single node, this can be minimal)
+cluster:
+  # Set to true if you want to enable clustering later
+  enabled: false
+
+# Collection settings
+collection:
+  # Default vector settings
+  default_vector_config:
+    distance: Cosine
+    
+  # Optimization settings
+  optimizer:
+    # Deleted vectors cleanup threshold
+    deleted_threshold: 0.2
+    
+    # Vacuum threshold  
+    vacuum_min_vector_number: 1000
+    
+    # Default segment number
+    default_segment_number: 0
+    
+    # Memmap storage threshold
+    memmap_threshold: 65536
+    
+    # Indexing threshold
+    indexing_threshold: 20000
+    
+    # Flush interval in seconds
+    flush_interval_sec: 5
+
+# Telemetry (disable for privacy)
+telemetry_disabled: true

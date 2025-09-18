@@ -1,0 +1,91 @@
+import os
+from pathlib import Path
+from pydantic_settings import BaseSettings
+from typing import List
+
+class Settings(BaseSettings):
+    # Environment
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = True
+    LOG_LEVEL: str = "INFO"
+    
+    # Project paths
+    PROJECT_ROOT: Path = Path(__file__).parent.parent
+    DATA_DIR: Path = PROJECT_ROOT / "data"
+    DOCUMENTS_DIR: Path = DATA_DIR / "documents"
+    EMBEDDINGS_DIR: Path = DATA_DIR / "embeddings"
+    MODELS_DIR: Path = DATA_DIR / "models"  # NEW: For GGUF models
+    LOGS_DIR: Path = PROJECT_ROOT / "logs"
+    
+    # Database Configuration
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "notebooklm"
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "password"
+    
+    # Qdrant Configuration
+    QDRANT_HOST: str = "localhost"
+    QDRANT_PORT: int = 6333
+    QDRANT_GRPC_PORT: int = 6334
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION_NAME: str = "document_embeddings"
+    QDRANT_USE_HTTPS: bool = False
+    
+    # LLM Configuration - UPDATED for llama.cpp
+    LLM_MODEL_PATH: str = ""  # Path to GGUF model file
+    LLM_MODEL_NAME: str = "qwen2.5-7b-instruct-q4_k_m.gguf"  # GGUF model filename
+    LLM_MODEL_URL: str = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf"
+    LLM_MAX_TOKENS: int = 2048
+    LLM_TEMPERATURE: float = 0.1
+    LLM_TOP_P: float = 0.9
+    LLM_CONTEXT_LENGTH: int = 4096
+    
+    # llama.cpp specific settings
+    LLAMACPP_N_GPU_LAYERS: int = 0  # Number of layers to offload to GPU (0 = CPU only)
+    LLAMACPP_N_BATCH: int = 512  # Batch size for prompt processing
+    LLAMACPP_N_THREADS: int = 4  # Number of CPU threads
+    LLAMACPP_VERBOSE: bool = False
+    
+    # Embedding Configuration
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+    EMBEDDING_DIMENSION: int = 1024
+    CHUNK_SIZE: int = 1000
+    CHUNK_OVERLAP: int = 200
+    
+    # File Processing
+    MAX_FILE_SIZE_MB: int = 100
+    SUPPORTED_FORMATS: List[str] = [".pdf", ".txt", ".md"]
+    
+    # Streamlit Configuration
+    STREAMLIT_SERVER_PORT: int = 8501
+    STREAMLIT_SERVER_ADDRESS: str = "0.0.0.0"
+    
+    @property
+    def database_url(self) -> str:
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+    
+    @property
+    def qdrant_url(self) -> str:
+        protocol = "https" if self.QDRANT_USE_HTTPS else "http"
+        return f"{protocol}://{self.QDRANT_HOST}:{self.QDRANT_PORT}"
+    
+    @property
+    def model_path(self) -> Path:
+        """Get full path to model file"""
+        if self.LLM_MODEL_PATH:
+            return Path(self.LLM_MODEL_PATH)
+        else:
+            return self.MODELS_DIR / self.LLM_MODEL_NAME
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+
+# Create global settings instance
+settings = Settings()
+
+# Ensure directories exist
+for directory in [settings.DATA_DIR, settings.DOCUMENTS_DIR, 
+                  settings.EMBEDDINGS_DIR, settings.MODELS_DIR, settings.LOGS_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
