@@ -4,7 +4,7 @@ from datetime import datetime
 
 from .embedding_service import EmbeddingService
 from src.rag.vector_store import QdrantVectorStore
-from src.utils.database import get_db_session, DocumentChunk
+from src.utils.database import get_db_session, DocumentChunk 
 from src.utils.exceptions import EmbeddingGenerationError, VectorStoreError
 
 logger = logging.getLogger(__name__)
@@ -172,77 +172,5 @@ def process_document_embeddings(document_id: int) -> Dict[str, Any]:
     Returns:
         Dictionary with processing results
     """
-    try:
-        logger.info(f"Processing embeddings for document {document_id}")
-        start_time = datetime.now()
-        
-        # Initialize services
-        from src.rag.embedding_service import EmbeddingService
-        embedding_service = EmbeddingService()
-        vector_store = QdrantVectorStore()  # Using Qdrant now
-        
-        # Get document chunks from database
-        db = get_db_session()
-        try:
-            chunks = db.query(DocumentChunk).filter(
-                DocumentChunk.document_id == document_id
-            ).order_by(DocumentChunk.chunk_index).all()
-            
-            if not chunks:
-                raise ValueError(f"No chunks found for document {document_id}")
-            
-            # Prepare chunk data and texts
-            chunks_data = []
-            texts = []
-            
-            for chunk in chunks:
-                chunks_data.append({
-                    'chunk_index': chunk.chunk_index,
-                    'content': chunk.content,
-                    'metadata': chunk.chunk_metadata or {}
-                })
-                texts.append(chunk.content)
-            
-            logger.info(f"Generating embeddings for {len(texts)} chunks")
-            
-            # Generate embeddings
-            embeddings = embedding_service.encode_texts(texts)
-            
-            # Insert into Qdrant vector store
-            embedding_ids = vector_store.insert_embeddings(
-                document_id, chunks_data, embeddings
-            )
-            
-            # Update database with embedding IDs
-            for chunk, embedding_id in zip(chunks, embedding_ids):
-                chunk.embedding_id = embedding_id
-            
-            db.commit()
-            
-            processing_time = (datetime.now() - start_time).total_seconds()
-            
-            result = {
-                'document_id': document_id,
-                'total_chunks': len(chunks_data),
-                'embedding_ids': embedding_ids,
-                'embedding_dimension': embeddings.shape[1],
-                'processing_time_seconds': processing_time,
-                'success': True
-            }
-            
-            logger.info(f"Embedding processing completed in {processing_time:.2f}s")
-            return result
-            
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"Error processing embeddings for document {document_id}: {e}")
-        return {
-            'document_id': document_id,
-            'success': False,
-            'error': str(e)
-        }
+    pipeline = EmbeddingPipeline()
+    return pipeline.process_document_embeddings(document_id)

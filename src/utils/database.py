@@ -35,7 +35,6 @@ class Document(Base):
     processing_status = Column(String(50), default="pending")
     total_chunks = Column(Integer, default=0)
     summary = Column(Text, nullable=True)
-    # metadata = Column(JSON, nullable=True)
     document_metadata = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

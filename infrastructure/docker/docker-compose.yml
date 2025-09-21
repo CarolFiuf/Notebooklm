@@ -49,11 +49,11 @@ services:
     networks:
       - notebooklm-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/readyz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 90s
+      start_period: 120s
     command: ./qdrant --config-path /qdrant/config/production.yaml
     logging:
       driver: "json-file"
@@ -150,11 +150,13 @@ services:
       - QDRANT_PORT=6333
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - MODELS_DIR=/app/data/models
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
     volumes:
       - app_data:/app/data
       - app_logs:/app/logs
+      - ./models:/app/data/models
       - ../../src:/app/src:ro  # Development mode
       - ../../config:/app/config:ro  # Development mode
     networks:
@@ -162,8 +164,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
+      # qdrant:
+      #   condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -197,6 +199,9 @@ volumes:
   app_logs:
     driver: local
     name: notebooklm_app_logs
+  # app_models:
+  #   driver: local
+  #   name: notebooklm_app_models
   nginx_logs:
     driver: local
     name: notebooklm_nginx_logs

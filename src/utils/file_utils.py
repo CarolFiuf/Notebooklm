@@ -2,7 +2,7 @@ import os
 import hashlib
 import shutil
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 import logging
 
 from config.config import settings
@@ -22,7 +22,7 @@ def validate_file_size(file_path: str) -> bool:
     return file_size <= max_size_bytes
 
 def generate_file_hash(file_path: str) -> str:
-    """Generate SHA-256 hash for file"""
+    """Generate SHA-256 hash for file from file path"""
     hash_sha256 = hashlib.sha256()
     try:
         with open(file_path, "rb") as f:
@@ -32,6 +32,32 @@ def generate_file_hash(file_path: str) -> str:
     except Exception as e:
         logger.error(f"Error generating hash for {file_path}: {e}")
         raise FileProcessingError(f"Failed to generate hash: {e}")
+
+def generate_content_hash(content: Union[str, bytes]) -> str:
+    """
+    Generate SHA-256 hash for text or byte content
+    
+    Args:
+        content: String or bytes content to hash
+        
+    Returns:
+        First 8 characters of SHA-256 hash
+    """
+    try:
+        hash_sha256 = hashlib.sha256()
+        
+        if isinstance(content, str):
+            hash_sha256.update(content.encode('utf-8'))
+        elif isinstance(content, bytes):
+            hash_sha256.update(content)
+        else:
+            raise ValueError(f"Content must be str or bytes, got {type(content)}")
+        
+        return hash_sha256.hexdigest()[:8]  # Use first 8 chars for chunk hashes
+        
+    except Exception as e:
+        logger.error(f"Error generating content hash: {e}")
+        raise FileProcessingError(f"Failed to generate content hash: {e}")
 
 def save_uploaded_file(uploaded_file, filename_prefix: Optional[str] = None) -> Tuple[str, str]:
     """

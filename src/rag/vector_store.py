@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import uuid
 import numpy as np
 from datetime import datetime
@@ -134,35 +134,43 @@ class QdrantVectorStore:
             current_time = datetime.now().isoformat()
             
             for i, (chunk, embedding) in enumerate(zip(chunks_data, embeddings)):
-                # Generate unique point ID
-                point_id = f"doc_{document_id}_chunk_{i}_{uuid.uuid4().hex[:8]}"
+                # ✅ FIXED: Generate simple numeric or UUID point ID
+                point_id = str(uuid.uuid4())  # Use clean UUID instead of complex string
                 point_ids.append(point_id)
+                
+                # ✅ FIXED: Ensure vector is proper float list
+                vector_list = embedding.astype(np.float32).tolist()
+                
+                # ✅ FIXED: Clean and validate payload data
+                payload = self._prepare_payload(document_id, chunk, current_time)
                 
                 # Create point with vector and payload
                 point = PointStruct(
                     id=point_id,
-                    vector=embedding.tolist(),
-                    payload={
-                        "document_id": document_id,
-                        "chunk_index": chunk['chunk_index'],
-                        "content": chunk['content'][:32000],  # Qdrant payload limit
-                        "metadata": chunk.get('metadata', {}),
-                        "created_at": current_time
-                    }
+                    vector=vector_list,
+                    payload=payload
                 )
                 points.append(point)
             
             # Insert points in batches
-            batch_size = 100
+            batch_size = 50  # Smaller batch size for reliability
             for i in range(0, len(points), batch_size):
                 batch = points[i:i + batch_size]
                 
-                operation_info = self.client.upsert(
-                    collection_name=self.collection_name,
-                    points=batch
-                )
-                
-                logger.debug(f"Inserted batch {i//batch_size + 1}: {len(batch)} points")
+                try:
+                    operation_info = self.client.upsert(
+                        collection_name=self.collection_name,
+                        points=batch,
+                        wait=True  # Wait for operation to complete
+                    )
+                    
+                    logger.debug(f"Inserted batch {i//batch_size + 1}: {len(batch)} points")
+                    
+                except Exception as batch_error:
+                    logger.error(f"Error inserting batch {i//batch_size + 1}: {batch_error}")
+                    # Try to diagnose the issue
+                    self._diagnose_insertion_error(batch[0], batch_error)
+                    raise
             
             logger.info(f"Successfully inserted {len(point_ids)} embeddings")
             return point_ids
@@ -170,6 +178,75 @@ class QdrantVectorStore:
         except Exception as e:
             logger.error(f"Error inserting embeddings: {e}")
             raise VectorStoreError(f"Embedding insertion failed: {e}")
+    
+    def _prepare_payload(self, document_id: int, chunk: Dict[str, Any], current_time: str) -> Dict[str, Any]:
+        """Prepare and validate payload for Qdrant"""
+        try:
+            # ✅ FIXED: Ensure all payload values are JSON-serializable
+            content = chunk.get('content', '')
+            if isinstance(content, str):
+                # Limit content length for Qdrant
+                content = content[:30000]  # 30KB limit
+            else:
+                content = str(content)[:30000]
+            
+            metadata = chunk.get('metadata', {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            
+            # Clean metadata - remove any non-serializable values
+            clean_metadata = {}
+            for key, value in metadata.items():
+                if isinstance(value, (str, int, float, bool, type(None))):
+                    clean_metadata[key] = value
+                elif isinstance(value, (list, dict)):
+                    # Keep simple lists/dicts, convert complex ones to strings
+                    try:
+                        import json
+                        json.dumps(value)  # Test if serializable
+                        clean_metadata[key] = value
+                    except:
+                        clean_metadata[key] = str(value)
+                else:
+                    clean_metadata[key] = str(value)
+            
+            payload = {
+                "document_id": int(document_id),  # Ensure it's int
+                "chunk_index": int(chunk.get('chunk_index', 0)),  # Ensure it's int
+                "content": content,
+                "metadata": clean_metadata,
+                "created_at": current_time
+            }
+            
+            return payload
+            
+        except Exception as e:
+            logger.error(f"Error preparing payload: {e}")
+            # Return minimal safe payload
+            return {
+                "document_id": int(document_id),
+                "chunk_index": 0,
+                "content": str(chunk.get('content', ''))[:1000],
+                "metadata": {},
+                "created_at": current_time
+            }
+    
+    def _diagnose_insertion_error(self, sample_point: PointStruct, error: Exception):
+        """Diagnose what went wrong with point insertion"""
+        logger.error("🔍 Diagnosing insertion error...")
+        logger.error(f"Point ID type: {type(sample_point.id)}")
+        logger.error(f"Point ID value: {sample_point.id}")
+        logger.error(f"Vector type: {type(sample_point.vector)}")
+        logger.error(f"Vector length: {len(sample_point.vector) if hasattr(sample_point.vector, '__len__') else 'unknown'}")
+        logger.error(f"Payload keys: {list(sample_point.payload.keys()) if sample_point.payload else 'None'}")
+        logger.error(f"Error: {error}")
+        
+        # Check vector format
+        if hasattr(sample_point.vector, '__len__'):
+            vector = sample_point.vector
+            if len(vector) > 0:
+                logger.error(f"First vector element type: {type(vector[0])}")
+                logger.error(f"Vector sample: {vector[:3]}...")
     
     def search_similar(
         self,
@@ -191,22 +268,37 @@ class QdrantVectorStore:
             List of search results
         """
         try:
+            # ✅ FIXED: Ensure query vector is proper format
+            query_vector = query_embedding.astype(np.float32).tolist()
+            
             # Prepare filter if document IDs specified
             query_filter = None
             if document_ids:
-                query_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="document_id",
-                            match=MatchValue(value=doc_id)
-                        ) for doc_id in document_ids
-                    ]
-                )
+                # ✅ FIXED: Use should (OR) instead of must (AND) for multiple document IDs
+                if len(document_ids) == 1:
+                    query_filter = Filter(
+                        must=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchValue(value=document_ids[0])
+                            )
+                        ]
+                    )
+                else:
+                    # Multiple document IDs - use should for OR condition
+                    query_filter = Filter(
+                        should=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchValue(value=doc_id)
+                            ) for doc_id in document_ids
+                        ]
+                    )
             
             # Perform search
             search_results = self.client.search(
                 collection_name=self.collection_name,
-                query_vector=query_embedding.tolist(),
+                query_vector=query_vector,
                 query_filter=query_filter,
                 limit=top_k,
                 score_threshold=min_score,
@@ -254,7 +346,8 @@ class QdrantVectorStore:
             # Delete points
             operation_info = self.client.delete(
                 collection_name=self.collection_name,
-                points_selector=delete_filter
+                points_selector=delete_filter,
+                wait=True
             )
             
             # Note: Qdrant doesn't return exact count in operation_info

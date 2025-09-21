@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "password"
     
+    # Redis Configuration (ADDED - was missing)
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    
     # Qdrant Configuration
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
@@ -34,8 +39,8 @@ class Settings(BaseSettings):
     
     # LLM Configuration - UPDATED for llama.cpp
     LLM_MODEL_PATH: str = ""  # Path to GGUF model file
-    LLM_MODEL_NAME: str = "qwen2.5-7b-instruct-q4_k_m.gguf"  # GGUF model filename
-    LLM_MODEL_URL: str = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf"
+    LLM_MODEL_NAME: str = "Qwen2.5-7B-Instruct-Q6_K_L.gguf"  # GGUF model filename
+    LLM_MODEL_URL: str = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q6_K_L.gguf"
     LLM_MAX_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.1
     LLM_TOP_P: float = 0.9
@@ -71,6 +76,14 @@ class Settings(BaseSettings):
         return f"{protocol}://{self.QDRANT_HOST}:{self.QDRANT_PORT}"
     
     @property
+    def redis_url(self) -> str:
+        """Get Redis connection URL"""
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}"
+        else:
+            return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
+    
+    @property
     def model_path(self) -> Path:
         """Get full path to model file"""
         if self.LLM_MODEL_PATH:
@@ -81,6 +94,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        # FIXED: Allow extra fields to prevent validation errors
+        extra = "ignore"  # This will ignore extra fields instead of raising errors
 
 # Create global settings instance
 settings = Settings()

@@ -16,9 +16,9 @@ from config.config import settings
 from src.utils.database import init_database, get_db_session, Document
 from src.utils.file_utils import save_uploaded_file
 from src.processing.document_processor import process_and_save_document
-from src.rag.embedding_service import process_document_embeddings
 from src.rag.rag_engine import initialize_rag_system
 from src.utils.exceptions import NotebookLMError
+from src.rag.embedding_pipeline import process_document_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,8 @@ def initialize_session_state():
         st.session_state.selected_documents = []
     if 'processing_status' not in st.session_state:
         st.session_state.processing_status = {}
+    if 'model_download_status' not in st.session_state:
+        st.session_state.model_download_status = 'not_started'
 
 @st.cache_resource
 def initialize_system():
@@ -139,55 +141,76 @@ def handle_file_upload():
                 process_uploaded_file(uploaded_file)
 
 def process_uploaded_file(uploaded_file):
-    """Process a single uploaded file"""
+    """Process a single uploaded file with duplicate handling"""
     try:
         with st.sidebar:
             progress_bar = st.progress(0, text="Starting processing...")
             status_text = st.empty()
             
             # Step 1: Save file
-            status_text.text("💾 Saving file...")
+            status_text.text("Saving file...")
             progress_bar.progress(20, text="Saving file...")
             
             file_path, unique_filename = save_uploaded_file(uploaded_file)
             logger.info(f"File saved: {unique_filename}")
             
-            # Step 2: Process document
-            status_text.text("🔍 Extracting text and creating chunks...")
+            # Step 2: Process document (with duplicate check)
+            status_text.text("Processing document...")
             progress_bar.progress(50, text="Processing document...")
             
             document_id = process_and_save_document(file_path, uploaded_file.name)
             logger.info(f"Document processed: ID {document_id}")
             
-            # Step 3: Generate embeddings
-            status_text.text("🧠 Generating embeddings...")
-            progress_bar.progress(80, text="Generating embeddings...")
+            # Step 3: Check if this was a duplicate
+            db = get_db_session()
+            try:
+                doc = db.query(Document).filter(Document.id == document_id).first()
+                is_duplicate = hasattr(doc, 'already_exists') or 'already_exists' in str(doc.metadata or {})
+            except:
+                is_duplicate = False
+            finally:
+                db.close()
             
-            embedding_result = process_document_embeddings(document_id)
-            
-            if embedding_result.get('success'):
-                progress_bar.progress(100, text="✅ Processing completed!")
+            if is_duplicate:
+                progress_bar.progress(100, text="Document already exists!")
                 status_text.markdown(
-                    f'<div class="success-message">✅ Successfully processed {uploaded_file.name}!</div>',
+                    f'<div class="success-message">Document "{uploaded_file.name}" already exists in the system. Skipping duplicate processing.</div>',
                     unsafe_allow_html=True
                 )
-                
-                # Update session state
-                st.session_state.processing_status[document_id] = "completed"
-                
-                # Auto-refresh to show new document
-                time.sleep(1)
-                st.rerun()
+                st.session_state.processing_status[document_id] = "duplicate"
             else:
-                error_msg = embedding_result.get('error', 'Unknown error')
-                status_text.markdown(
-                    f'<div class="error-message">❌ Processing failed: {error_msg}</div>',
-                    unsafe_allow_html=True
-                )
+                # Step 3: Generate embeddings for new documents
+                status_text.text("Generating embeddings...")
+                progress_bar.progress(80, text="Generating embeddings...")
+                
+                embedding_result = process_document_embeddings(document_id)
+                
+                if embedding_result.get('success'):
+                    progress_bar.progress(100, text="Processing completed!")
+                    status_text.markdown(
+                        f'<div class="success-message">Successfully processed {uploaded_file.name}!</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.session_state.processing_status[document_id] = "completed"
+                else:
+                    error_msg = embedding_result.get('error', 'Unknown error')
+                    status_text.markdown(
+                        f'<div class="error-message">Processing failed: {error_msg}</div>',
+                        unsafe_allow_html=True
+                    )
+            
+            # Auto-refresh to show document status
+            time.sleep(1)
+            st.rerun()
                 
     except Exception as e:
         logger.error(f"Error processing file {uploaded_file.name}: {e}")
-        st.sidebar.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+        
+        # Handle specific duplicate error messages
+        if "duplicate key value violates unique constraint" in str(e):
+            st.sidebar.info(f"Document {uploaded_file.name} already exists in the system.")
+        else:
+            st.sidebar.error(f"Error processing {uploaded_file.name}: {str(e)}")
 
 def load_documents_from_db() -> List[Dict[str, Any]]:
     """Load documents from database"""
@@ -217,22 +240,22 @@ def load_documents_from_db() -> List[Dict[str, Any]]:
         return []
 
 def display_document_library():
-    """Display document library in sidebar"""
-    st.sidebar.subheader("📚 Document Library")
+    """Display document library in sidebar with duplicate status"""
+    st.sidebar.subheader("Document Library")
     
     documents = load_documents_from_db()
     
     if not documents:
-        st.sidebar.info("📄 No documents uploaded yet. Upload some documents to get started!")
+        st.sidebar.info("No documents uploaded yet. Upload some documents to get started!")
         return []
     
     # Document selection for chat
-    st.sidebar.subheader("🎯 Select Documents for Chat")
+    st.sidebar.subheader("Select Documents for Chat")
     
-    # Create options for multiselect
+    # Create options for multiselect with status indicators
     doc_options = {}
     for doc in documents:
-        status_emoji = "✅" if doc['processing_status'] == 'completed' else "⏳"
+        status_emoji = get_status_emoji(doc['processing_status'])
         display_name = f"{status_emoji} {doc['filename'][:30]}{'...' if len(doc['filename']) > 30 else ''}"
         doc_options[display_name] = doc['id']
     
@@ -246,11 +269,11 @@ def display_document_library():
     
     selected_doc_ids = [doc_options[name] for name in selected_display_names]
     
-    # Display document details
-    st.sidebar.subheader("📋 Document Details")
+    # Display document details with duplicate info
+    st.sidebar.subheader("Document Details")
     
     for doc in documents[:5]:  # Show first 5 documents
-        with st.sidebar.expander(f"📄 {doc['filename'][:25]}..."):
+        with st.sidebar.expander(f"{doc['filename'][:25]}..."):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -259,18 +282,45 @@ def display_document_library():
             
             with col2:
                 st.write("**Chunks:**", doc['total_chunks'])
-                st.write("**Status:**", doc['processing_status'])
+                st.write("**Status:**", format_status(doc['processing_status']))
             
             st.write("**Uploaded:**", doc['upload_date'].strftime('%Y-%m-%d %H:%M'))
             
+            # Show duplicate warning if applicable
+            processing_status = st.session_state.processing_status.get(doc['id'])
+            if processing_status == "duplicate":
+                st.warning("This document is a duplicate of an existing file.")
+            
             # Generate summary button
-            if st.button(f"📝 Generate Summary", key=f"summary_{doc['id']}"):
+            if st.button(f"Generate Summary", key=f"summary_{doc['id']}"):
                 generate_document_summary(doc['id'])
     
     if len(documents) > 5:
-        st.sidebar.info(f"📊 Showing 5 of {len(documents)} documents")
+        st.sidebar.info(f"Showing 5 of {len(documents)} documents")
     
     return selected_doc_ids
+
+def get_status_emoji(status):
+    """Get emoji for document processing status"""
+    status_map = {
+        'completed': '✅',
+        'processing': '⏳',
+        'pending': '📄',
+        'failed': '❌',
+        'duplicate': '🔄'
+    }
+    return status_map.get(status, '📄')
+
+def format_status(status):
+    """Format status for display"""
+    status_map = {
+        'completed': 'Completed',
+        'processing': 'Processing',
+        'pending': 'Pending',
+        'failed': 'Failed',
+        'duplicate': 'Duplicate'
+    }
+    return status_map.get(status, status.title())
 
 def generate_document_summary(document_id: int):
     """Generate and display document summary"""
@@ -455,11 +505,11 @@ def display_system_status():
         try:
             health_status = st.session_state.rag_engine.health_check()
             
-            # FIXED: Update component names for Qdrant
+            # CORRECT component names for Qdrant
             component_names = {
                 'embedding_service': '🧠 Embedding Service',
-                'vector_store': '🗃️ Qdrant Vector Store',  # ✅ FIXED: Changed from Milvus
-                'llm_service': '🤖 LLM Service'
+                'vector_store': '🗃️ Qdrant Vector Store',  # ✅ Already correct
+                'llm_service': '🤖 LLM Service (llama.cpp)'  # ✅ Updated for llama.cpp
             }
             
             for component, status in health_status.items():

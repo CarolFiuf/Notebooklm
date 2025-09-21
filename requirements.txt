@@ -10,6 +10,7 @@ sentence-transformers
 transformers
 
 # RAG & Vector DB
+llama-cpp-python==0.2.82
 langchain>=0.1.0,<0.2.0
 langchain-community>=0.0.38
 # pymilvus==2.3.4
@@ -35,6 +36,7 @@ beautifulsoup4==4.12.2
 numpy
 pandas==2.1.4
 uuid==1.30
+tqdm
 
 # Development
 jupyter==1.0.0

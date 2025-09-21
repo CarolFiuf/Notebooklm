@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from sqlalchemy.exc import IntegrityError
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document as LangChainDocument
@@ -11,7 +12,7 @@ from config.config import settings
 from src.utils.exceptions import DocumentProcessingError, UnsupportedFileTypeError
 from src.utils.database import get_db_session, Document, DocumentChunk
 from src.utils.models import DocumentCreate
-from src.utils.file_utils import generate_file_hash, get_file_info
+from src.utils.file_utils import generate_file_hash, generate_content_hash, get_file_info
 from .extractors import PDFExtractor, TextExtractor
 
 logger = logging.getLogger(__name__)
@@ -57,19 +58,26 @@ class DocumentProcessor:
             # Step 1: Validate file
             file_info = self._validate_file(file_path, original_filename)
             
-            # Step 2: Extract text
+            # Step 2: Check if document already exists
+            existing_doc = self._check_existing_document(file_path, original_filename)
+            if existing_doc:
+                logger.info(f"Document already exists with ID: {existing_doc['id']}")
+                return existing_doc
+            
+            # Step 3: Extract text
             text_content, extraction_metadata = self._extract_text(
                 file_path, file_info['file_type']
             )
             
-            # Step 3: Create chunks
+            # Step 4: Create chunks
             chunks = self._create_chunks(text_content, extraction_metadata)
             
-            # Step 4: Generate unique filename
+            # Step 5: Generate unique filename with timestamp
             file_hash = generate_file_hash(file_path)
-            unique_filename = f"{file_hash}_{original_filename}"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique_filename = f"{file_hash}_{timestamp}_{original_filename}"
             
-            # Step 5: Prepare result
+            # Step 6: Prepare result
             processing_time = (datetime.now() - start_time).total_seconds()
             
             result = {
@@ -98,6 +106,43 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Error processing document {original_filename}: {e}")
             raise DocumentProcessingError(f"Processing failed: {e}")
+    
+    def _check_existing_document(self, file_path: str, original_filename: str) -> Optional[Dict[str, Any]]:
+        """Check if document with same content already exists"""
+        try:
+            file_hash = generate_file_hash(file_path)
+            
+            db = get_db_session()
+            try:
+                # Look for existing document with same file hash pattern
+                existing_docs = db.query(Document).filter(
+                    Document.filename.like(f"{file_hash}_%"),
+                    Document.original_filename == original_filename
+                ).first()
+                
+                if existing_docs:
+                    logger.info(f"Found existing document: {existing_docs.id}")
+                    return {
+                        'id': existing_docs.id,
+                        'filename': existing_docs.filename,
+                        'original_filename': existing_docs.original_filename,
+                        'file_path': existing_docs.file_path,
+                        'file_size': existing_docs.file_size,
+                        'file_type': existing_docs.file_type,
+                        'total_chunks': existing_docs.total_chunks,
+                        'processing_status': existing_docs.processing_status,
+                        'metadata': existing_docs.metadata,
+                        'already_exists': True
+                    }
+                
+                return None
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error checking existing document: {e}")
+            return None
     
     def _validate_file(self, file_path: str, original_filename: str) -> Dict[str, Any]:
         """Validate file and extract basic information"""
@@ -161,14 +206,16 @@ class DocumentProcessor:
             # Convert to our format
             chunk_list = []
             for idx, chunk in enumerate(chunks):
+                chunk_content = chunk.page_content.strip()
+                
                 chunk_data = {
                     'chunk_index': idx,
-                    'content': chunk.page_content.strip(),
+                    'content': chunk_content,
                     'metadata': {
                         **chunk.metadata,
-                        'chunk_size': len(chunk.page_content),
+                        'chunk_size': len(chunk_content),
                         'chunk_id': f"chunk_{idx}",
-                        'chunk_hash': generate_file_hash(chunk.page_content.encode())[:8]
+                        'chunk_hash': generate_content_hash(chunk_content)
                     }
                 }
                 
@@ -185,6 +232,11 @@ class DocumentProcessor:
     
     def save_to_database(self, processed_doc: Dict[str, Any]) -> int:
         """Save processed document and chunks to database"""
+        
+        # If document already exists, return its ID
+        if processed_doc.get('already_exists'):
+            return processed_doc['id']
+        
         db = get_db_session()
         try:
             logger.info(f"Saving document to database: {processed_doc['original_filename']}")
@@ -202,7 +254,37 @@ class DocumentProcessor:
             )
             
             db.add(doc_record)
-            db.flush()  # Get the ID without committing
+            
+            try:
+                db.flush()  # Get the ID without committing
+            except IntegrityError as e:
+                if "duplicate key value violates unique constraint" in str(e):
+                    db.rollback()
+                    logger.warning(f"Document filename already exists, attempting to find existing record")
+                    
+                    # Try to find the existing document
+                    existing_doc = db.query(Document).filter(
+                        Document.filename == processed_doc['filename']
+                    ).first()
+                    
+                    if existing_doc:
+                        logger.info(f"Found existing document with ID: {existing_doc.id}")
+                        return existing_doc.id
+                    else:
+                        # Generate a new unique filename with milliseconds
+                        import time
+                        timestamp_ms = int(time.time() * 1000)
+                        file_hash = processed_doc['filename'].split('_')[0]
+                        new_filename = f"{file_hash}_{timestamp_ms}_{processed_doc['original_filename']}"
+                        
+                        doc_record.filename = new_filename
+                        processed_doc['filename'] = new_filename
+                        
+                        db.add(doc_record)
+                        db.flush()
+                        logger.info(f"Created new document with filename: {new_filename}")
+                else:
+                    raise e
             
             # Save chunks
             chunk_records = []
