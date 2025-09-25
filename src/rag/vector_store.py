@@ -134,43 +134,40 @@ class QdrantVectorStore:
             current_time = datetime.now().isoformat()
             
             for i, (chunk, embedding) in enumerate(zip(chunks_data, embeddings)):
-                # ✅ FIXED: Generate simple numeric or UUID point ID
-                point_id = str(uuid.uuid4())  # Use clean UUID instead of complex string
-                point_ids.append(point_id)
+                chunk_index = int(chunk.get('chunk_index', i))
+                deterministic_id = f"doc:{document_id}:chunk:{chunk_index}"
+                point_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, deterministic_id)
+                point_ids.append(str(point_uuid))
                 
-                # ✅ FIXED: Ensure vector is proper float list
+                # ✅ FIXED: Ensure vector is proper format
                 vector_list = embedding.astype(np.float32).tolist()
                 
-                # ✅ FIXED: Clean and validate payload data
-                payload = self._prepare_payload(document_id, chunk, current_time)
+                # Prepare payload
+                payload = {
+                    "document_id": document_id,
+                    "chunk_index": chunk_index,
+                    "content": chunk.get('content', '')[:10000],  # Limit content length
+                    "metadata": chunk.get('metadata', {}),
+                    "created_at": current_time
+                }
                 
-                # Create point with vector and payload
                 point = PointStruct(
-                    id=point_id,
+                    id=str(point_uuid),  # Qdrant client expects str for UUID identifiers
                     vector=vector_list,
                     payload=payload
                 )
                 points.append(point)
             
-            # Insert points in batches
-            batch_size = 50  # Smaller batch size for reliability
+            # Insert in batches
+            batch_size = 50
             for i in range(0, len(points), batch_size):
                 batch = points[i:i + batch_size]
                 
-                try:
-                    operation_info = self.client.upsert(
-                        collection_name=self.collection_name,
-                        points=batch,
-                        wait=True  # Wait for operation to complete
-                    )
-                    
-                    logger.debug(f"Inserted batch {i//batch_size + 1}: {len(batch)} points")
-                    
-                except Exception as batch_error:
-                    logger.error(f"Error inserting batch {i//batch_size + 1}: {batch_error}")
-                    # Try to diagnose the issue
-                    self._diagnose_insertion_error(batch[0], batch_error)
-                    raise
+                operation_info = self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=batch,
+                    wait=True
+                )
             
             logger.info(f"Successfully inserted {len(point_ids)} embeddings")
             return point_ids
@@ -268,34 +265,24 @@ class QdrantVectorStore:
             List of search results
         """
         try:
-            # ✅ FIXED: Ensure query vector is proper format
             query_vector = query_embedding.astype(np.float32).tolist()
             
-            # Prepare filter if document IDs specified
+            # ✅ FIXED: Proper filter construction for multiple document IDs
             query_filter = None
             if document_ids:
-                # ✅ FIXED: Use should (OR) instead of must (AND) for multiple document IDs
                 if len(document_ids) == 1:
                     query_filter = Filter(
-                        must=[
-                            FieldCondition(
-                                key="document_id",
-                                match=MatchValue(value=document_ids[0])
-                            )
-                        ]
+                        must=[FieldCondition(key="document_id", match=MatchValue(value=document_ids[0]))]
                     )
                 else:
-                    # Multiple document IDs - use should for OR condition
+                    # For multiple IDs, use should (OR condition)
                     query_filter = Filter(
                         should=[
-                            FieldCondition(
-                                key="document_id",
-                                match=MatchValue(value=doc_id)
-                            ) for doc_id in document_ids
+                            FieldCondition(key="document_id", match=MatchValue(value=doc_id))
+                            for doc_id in document_ids
                         ]
                     )
             
-            # Perform search
             search_results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_vector,
@@ -311,7 +298,6 @@ class QdrantVectorStore:
             for result in search_results:
                 if isinstance(result, ScoredPoint):
                     payload = result.payload or {}
-                    
                     processed_result = {
                         'id': str(result.id),
                         'document_id': payload.get('document_id'),
@@ -323,7 +309,6 @@ class QdrantVectorStore:
                     }
                     results.append(processed_result)
             
-            logger.info(f"Found {len(results)} similar chunks (min_score={min_score})")
             return results
             
         except Exception as e:

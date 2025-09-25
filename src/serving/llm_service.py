@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 import os
 from datetime import datetime
 from pathlib import Path
+import threading
 
 from llama_cpp import Llama
 
@@ -28,6 +29,7 @@ class LlamaCppService:
         self.verbose = settings.LLAMACPP_VERBOSE
         
         self.llm = None
+        self._lock = threading.Lock()
         self._ensure_model_exists()
         self._initialize_llm()
     
@@ -88,17 +90,31 @@ class LlamaCppService:
             logger.info(f"Initializing llama.cpp with model: {self.model_path}")
             start_time = datetime.now()
             
-            # Initialize Llama model
+            # Initialize Llama model with safe memory settings
+            cpu_count = os.cpu_count() or 1
+            safe_n_batch = min(self.n_batch, self.context_length)
+
+            # llama.cpp on CPU can assert when the decode micro-batch is too large.
+            # Empirically, staying at <=64 avoids the out_ids mismatch we observed.
+            if self.n_gpu_layers == 0 and safe_n_batch > 64:
+                logger.warning(
+                    "Reducing n_batch from %s to 64 for CPU-only stability",
+                    safe_n_batch,
+                )
+                safe_n_batch = 64
+
             self.llm = Llama(
                 model_path=str(self.model_path),
                 n_ctx=self.context_length,  # Context window
-                n_batch=self.n_batch,  # Batch size
-                n_threads=self.n_threads,  # CPU threads
+                n_batch=safe_n_batch,  # Use safe batch size
+                n_threads=min(self.n_threads, cpu_count),  # Cap to available CPUs
                 n_gpu_layers=self.n_gpu_layers,  # GPU layers (0 = CPU only)
                 verbose=self.verbose,
                 use_mmap=True,  # Use memory mapping
                 use_mlock=False,  # Don't lock memory
                 seed=42,  # For reproducible results
+                logits_all=False,  # Don't compute all logits
+                embedding=False,  # Not used for embeddings
             )
             
             init_time = (datetime.now() - start_time).total_seconds()
@@ -108,9 +124,11 @@ class LlamaCppService:
             logger.info(f"Context length: {self.context_length}")
             logger.info(f"GPU layers: {self.n_gpu_layers}")
             logger.info(f"CPU threads: {self.n_threads}")
+            logger.info(f"Batch size (n_batch): {safe_n_batch}")
             
         except Exception as e:
-            logger.error(f"Error initializing llama.cpp: {e}")
+            # Include traceback for easier diagnosis in container logs
+            logger.exception("Error initializing llama.cpp")
             raise LLMServiceError(f"llama.cpp initialization failed: {e}")
     
     def generate_response(
@@ -152,7 +170,8 @@ class LlamaCppService:
             # Generate response
             logger.debug(f"Generating response for prompt: {prompt[:100]}...")
             
-            response = self.llm(**generation_kwargs)
+            with self._lock:
+                response = self.llm(**generation_kwargs)
             
             # Extract generated text
             if response and "choices" in response and len(response["choices"]) > 0:
@@ -220,11 +239,12 @@ class LlamaCppService:
             }
             
             # Generate streaming response
-            for chunk in self.llm(**generation_kwargs):
-                if chunk and "choices" in chunk and len(chunk["choices"]) > 0:
-                    token = chunk["choices"][0].get("text", "")
-                    if token:
-                        yield token
+            with self._lock:
+                for chunk in self.llm(**generation_kwargs):
+                    if chunk and "choices" in chunk and len(chunk["choices"]) > 0:
+                        token = chunk["choices"][0].get("text", "")
+                        if token:
+                            yield token
                         
         except Exception as e:
             logger.error(f"Error generating streaming response: {e}")

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DATA_DIR: Path = PROJECT_ROOT / "data"
     DOCUMENTS_DIR: Path = DATA_DIR / "documents"
     EMBEDDINGS_DIR: Path = DATA_DIR / "embeddings"
-    MODELS_DIR: Path = DATA_DIR / "models"  # NEW: For GGUF models
+    MODELS_DIR: Path = DATA_DIR / "models"  
     LOGS_DIR: Path = PROJECT_ROOT / "logs"
     
     # Database Configuration
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "notebooklm"
     POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "password"
+    POSTGRES_PASSWORD: str = "123456"
     
     # Redis Configuration (ADDED - was missing)
     REDIS_HOST: str = "localhost"
@@ -39,24 +39,28 @@ class Settings(BaseSettings):
     
     # LLM Configuration - UPDATED for llama.cpp
     LLM_MODEL_PATH: str = ""  # Path to GGUF model file
-    LLM_MODEL_NAME: str = "Qwen2.5-7B-Instruct-Q6_K_L.gguf"  # GGUF model filename
-    LLM_MODEL_URL: str = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q6_K_L.gguf"
+    # LLM_MODEL_NAME: str = "Qwen2.5-7B-Instruct-Q6_K_L.gguf"  # GGUF model filename
+    LLM_MODEL_NAME: str = "Qwen2.5-7B-Instruct-Q4_K_M.gguf"  # GGUF model filename
+    # LLM_MODEL_URL: str = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q6_K_L.gguf"
+    LLM_MODEL_URL: str = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
     LLM_MAX_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.1
     LLM_TOP_P: float = 0.9
     LLM_CONTEXT_LENGTH: int = 4096
     
-    # llama.cpp specific settings
+    # llama.cpp specific settings - safer defaults to prevent GGML errors
     LLAMACPP_N_GPU_LAYERS: int = 0  # Number of layers to offload to GPU (0 = CPU only)
-    LLAMACPP_N_BATCH: int = 512  # Batch size for prompt processing
-    LLAMACPP_N_THREADS: int = 4  # Number of CPU threads
+    LLAMACPP_N_BATCH: int = 64 # Reduced batch size to prevent memory issues
+    LLAMACPP_N_THREADS: int = 4  # Reduced CPU threads for stability
     LLAMACPP_VERBOSE: bool = False
     
     # Embedding Configuration
-    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+    # EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+    # EMBEDDING_MODEL_NAME: str = "Qwen/Qwen3-Embedding-0.6B"
+    EMBEDDING_MODEL_NAME: str = "intfloat/multilingual-e5-large-instruct"
     EMBEDDING_DIMENSION: int = 1024
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 200
+    CHUNK_SIZE: int = 800   
+    CHUNK_OVERLAP: int = 100
     
     # File Processing
     MAX_FILE_SIZE_MB: int = 100

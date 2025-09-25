@@ -5,6 +5,8 @@ from sentence_transformers import SentenceTransformer
 import torch
 from datetime import datetime
 
+# from llama_cpp import Llama
+
 from config.config import settings
 from src.utils.exceptions import EmbeddingGenerationError
 from src.rag.vector_store import QdrantVectorStore
@@ -12,7 +14,7 @@ from src.rag.vector_store import QdrantVectorStore
 logger = logging.getLogger(__name__)
 
 class EmbeddingService:
-    """Service for generating embeddings using BGE-M3 model"""
+    """Service for generating embeddings using embedding model"""
     
     def __init__(self):
         self.model_name = settings.EMBEDDING_MODEL_NAME
@@ -31,7 +33,15 @@ class EmbeddingService:
             self.model = SentenceTransformer(
                 self.model_name,
                 device=self.device,
-                trust_remote_code=True
+                trust_remote_code=True,
+                cache_folder=None,  # Use default cache
+                use_auth_token=None,  # No auth token needed
+                revision=None,  # Use main branch
+                local_files_only=False,  # Allow downloads if needed
+                model_kwargs={
+                    'torch_dtype': 'auto',  # Let torch decide
+                    'attn_implementation': 'eager',  # Use eager attention
+                }
             )
             
             # Get actual embedding dimension
