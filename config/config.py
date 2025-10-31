@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     
     # llama.cpp specific settings - safer defaults to prevent GGML errors
     LLAMACPP_N_GPU_LAYERS: int = 0  # Number of layers to offload to GPU (0 = CPU only)
-    LLAMACPP_N_BATCH: int = 64 # Reduced batch size to prevent memory issues
+    LLAMACPP_N_BATCH: int = 128 # Reduced batch size to prevent memory issues
     LLAMACPP_N_THREADS: int = 4  # Reduced CPU threads for stability
     LLAMACPP_VERBOSE: bool = False
     
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     
     # File Processing
     MAX_FILE_SIZE_MB: int = 100
-    SUPPORTED_FORMATS: List[str] = [".pdf", ".txt", ".md"]
+    SUPPORTED_FORMATS: List[str] = [".pdf", ".txt", ".md", ".docx", ".doc"]
     
     # Streamlit Configuration
     STREAMLIT_SERVER_PORT: int = 8501

@@ -8,7 +8,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import (
     VectorParams, Distance, PointStruct, 
     Filter, FieldCondition, MatchValue,
-    ScoredPoint, CollectionInfo
+    ScoredPoint, CollectionInfo, FilterSelector
 )
 from qdrant_client.http.exceptions import UnexpectedResponse
 
@@ -24,7 +24,8 @@ class QdrantVectorStore:
         self.host = settings.QDRANT_HOST
         self.port = settings.QDRANT_PORT
         self.collection_name = settings.QDRANT_COLLECTION_NAME
-        self.embedding_dim = settings.EMBEDDING_DIMENSION
+        # Use dimension from config as the single source of truth
+        self.embedding_dim = int(settings.EMBEDDING_DIMENSION)
         self.api_key = settings.QDRANT_API_KEY
         
         self.client = None
@@ -71,6 +72,19 @@ class QdrantVectorStore:
                 # Get collection info
                 collection_info = self.client.get_collection(self.collection_name)
                 logger.info(f"Collection info: {collection_info.vectors_count} vectors")
+
+                # Validate vector size matches embedding dimension
+                try:
+                    existing_dim = int(collection_info.config.params.vectors.size)
+                except Exception:
+                    existing_dim = None
+                if existing_dim and existing_dim != self.embedding_dim:
+                    msg = (
+                        f"Qdrant collection vector size ({existing_dim}) does not match embedding dimension "
+                        f"({self.embedding_dim}). Please recreate the collection or adjust configuration."
+                    )
+                    logger.error(msg)
+                    raise VectorStoreError(msg)
             else:
                 logger.info(f"Creating new collection: {self.collection_name}")
                 self._create_collection()
@@ -142,14 +156,15 @@ class QdrantVectorStore:
                 # ✅ FIXED: Ensure vector is proper format
                 vector_list = embedding.astype(np.float32).tolist()
                 
-                # Prepare payload
-                payload = {
-                    "document_id": document_id,
-                    "chunk_index": chunk_index,
-                    "content": chunk.get('content', '')[:10000],  # Limit content length
-                    "metadata": chunk.get('metadata', {}),
-                    "created_at": current_time
-                }
+                # Ensure chunk_index is present in chunk for payload prep
+                if 'chunk_index' not in chunk or chunk.get('chunk_index') is None:
+                    try:
+                        chunk['chunk_index'] = chunk_index
+                    except Exception:
+                        pass
+
+                # Prepare payload using centralized sanitizer
+                payload = self._prepare_payload(document_id, chunk, current_time)
                 
                 point = PointStruct(
                     id=str(point_uuid),  # Qdrant client expects str for UUID identifiers
@@ -159,7 +174,7 @@ class QdrantVectorStore:
                 points.append(point)
             
             # Insert in batches
-            batch_size = 50
+            batch_size = 256
             for i in range(0, len(points), batch_size):
                 batch = points[i:i + batch_size]
                 
@@ -328,17 +343,29 @@ class QdrantVectorStore:
                 ]
             )
             
+            try:
+                count_resp = self.client.count(
+                    collection_name=self.collection_name,
+                    count_filter=delete_filter,
+                    exact=True
+                )
+                points_to_delete = int(getattr(count_resp, "count", 0) or 0)
+            except Exception:
+                points_to_delete = 0
+                
+            points_selector = FilterSelector(filter=delete_filter)
+            
             # Delete points
             operation_info = self.client.delete(
                 collection_name=self.collection_name,
-                points_selector=delete_filter,
+                points_selector=points_selector,
                 wait=True
             )
             
-            # Note: Qdrant doesn't return exact count in operation_info
-            # We'll estimate based on the operation status
-            deleted_count = 1 if operation_info.status == "completed" else 0
-            
+            deleted_count = points_to_delete if points_to_delete > 0 else (
+                1 if operation_info.status == "completed" else 0
+            )
+
             logger.info(f"Deletion operation completed for document {document_id}")
             return deleted_count
             

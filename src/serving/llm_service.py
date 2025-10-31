@@ -9,6 +9,7 @@ from llama_cpp import Llama
 
 from config.config import settings
 from src.utils.exceptions import LLMServiceError
+from src.utils.retry_utils import llm_retry
 
 logger = logging.getLogger(__name__)
 
@@ -92,16 +93,7 @@ class LlamaCppService:
             
             # Initialize Llama model with safe memory settings
             cpu_count = os.cpu_count() or 1
-            safe_n_batch = min(self.n_batch, self.context_length)
-
-            # llama.cpp on CPU can assert when the decode micro-batch is too large.
-            # Empirically, staying at <=64 avoids the out_ids mismatch we observed.
-            if self.n_gpu_layers == 0 and safe_n_batch > 64:
-                logger.warning(
-                    "Reducing n_batch from %s to 64 for CPU-only stability",
-                    safe_n_batch,
-                )
-                safe_n_batch = 64
+            safe_n_batch = self.n_batch
 
             self.llm = Llama(
                 model_path=str(self.model_path),
@@ -115,6 +107,7 @@ class LlamaCppService:
                 seed=42,  # For reproducible results
                 logits_all=False,  # Don't compute all logits
                 embedding=False,  # Not used for embeddings
+                n_keep=512,  # Keep first 512 tokens when context is full
             )
             
             init_time = (datetime.now() - start_time).total_seconds()
@@ -131,6 +124,7 @@ class LlamaCppService:
             logger.exception("Error initializing llama.cpp")
             raise LLMServiceError(f"llama.cpp initialization failed: {e}")
     
+    @llm_retry  # ✅ Retry on transient failures (5 attempts, exponential backoff)
     def generate_response(
         self,
         prompt: str,
@@ -140,22 +134,26 @@ class LlamaCppService:
         stop: Optional[List[str]] = None
     ) -> str:
         """
-        Generate response using llama.cpp
-        
+        Generate response using llama.cpp with automatic retry on failures.
+
         Args:
             prompt: Input prompt
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             top_p: Top-p sampling parameter
             stop: Stop sequences
-            
+
         Returns:
             Generated text response
+
+        Note:
+            This method automatically retries up to 5 times with exponential backoff
+            (4-30 seconds) on transient failures.
         """
         try:
             if not self.llm:
                 raise LLMServiceError("LLM not initialized")
-            
+
             # Prepare generation parameters
             generation_kwargs = {
                 "prompt": prompt,
@@ -166,23 +164,23 @@ class LlamaCppService:
                 "stop": stop or ["</s>", "<|endoftext|>", "<|im_end|>", "Human:", "User:"],
                 "stream": False
             }
-            
+
             # Generate response
             logger.debug(f"Generating response for prompt: {prompt[:100]}...")
-            
+
             with self._lock:
                 response = self.llm(**generation_kwargs)
-            
+
             # Extract generated text
             if response and "choices" in response and len(response["choices"]) > 0:
                 generated_text = response["choices"][0]["text"].strip()
-                
+
                 logger.debug(f"Generated response: {generated_text[:100]}...")
                 return generated_text
             else:
                 logger.warning("No response generated from llama.cpp")
                 return "I apologize, but I couldn't generate a response."
-            
+
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             raise LLMServiceError(f"Response generation failed: {e}")
@@ -215,6 +213,7 @@ class LlamaCppService:
             logger.error(f"Error generating batch responses: {e}")
             raise LLMServiceError(f"Batch generation failed: {e}")
     
+    @llm_retry  # ✅ Retry on transient failures
     def generate_stream(
         self,
         prompt: str,
@@ -223,11 +222,17 @@ class LlamaCppService:
         top_p: Optional[float] = None,
         stop: Optional[List[str]] = None
     ):
-        """Generate streaming response (generator)"""
+        """
+        Generate streaming response (generator) with automatic retry.
+
+        Note:
+            This method automatically retries up to 5 times with exponential backoff
+            (4-30 seconds) on transient failures.
+        """
         try:
             if not self.llm:
                 raise LLMServiceError("LLM not initialized")
-            
+
             generation_kwargs = {
                 "prompt": prompt,
                 "max_tokens": max_tokens or self.max_tokens,
@@ -237,7 +242,7 @@ class LlamaCppService:
                 "stop": stop or ["</s>", "<|endoftext|>", "<|im_end|>"],
                 "stream": True
             }
-            
+
             # Generate streaming response
             with self._lock:
                 for chunk in self.llm(**generation_kwargs):
@@ -245,7 +250,7 @@ class LlamaCppService:
                         token = chunk["choices"][0].get("text", "")
                         if token:
                             yield token
-                        
+
         except Exception as e:
             logger.error(f"Error generating streaming response: {e}")
             raise LLMServiceError(f"Streaming generation failed: {e}")
@@ -271,16 +276,23 @@ class LlamaCppService:
             logger.error(f"Error getting model info: {e}")
             return {'error': str(e)}
     
+    @llm_retry  # ✅ Retry on transient failures
     def health_check(self) -> bool:
-        """Check if LLM service is healthy"""
+        """
+        Check if LLM service is healthy with automatic retry.
+
+        Note:
+            This method automatically retries up to 5 times with exponential backoff
+            (4-30 seconds) on transient failures.
+        """
         try:
             if not self.llm:
                 return False
-                
+
             # Simple test generation
             test_response = self.generate_response(
-                "Hello", 
-                max_tokens=5, 
+                "Hello",
+                max_tokens=5,
                 temperature=0.1
             )
             return bool(test_response and len(test_response) > 0)
@@ -288,17 +300,135 @@ class LlamaCppService:
             logger.error(f"LLM health check failed: {e}")
             return False
     
+    def tokenize(self, text: str) -> List[int]:
+        """
+        Tokenize text using llama.cpp's built-in tokenizer
+
+        Args:
+            text: Text to tokenize
+
+        Returns:
+            List of token IDs
+        """
+        try:
+            if not self.llm:
+                raise LLMServiceError("LLM not initialized")
+
+            # llama.cpp expects bytes
+            tokens = self.llm.tokenize(text.encode('utf-8'))
+            return tokens
+
+        except Exception as e:
+            logger.error(f"Error tokenizing text: {e}")
+            return []
+
+    def detokenize(self, tokens: List[int]) -> str:
+        """
+        Convert tokens back to text
+
+        Args:
+            tokens: List of token IDs
+
+        Returns:
+            Decoded text string
+        """
+        try:
+            if not self.llm:
+                raise LLMServiceError("LLM not initialized")
+
+            # llama.cpp returns bytes
+            text = self.llm.detokenize(tokens).decode('utf-8', errors='ignore')
+            return text
+
+        except Exception as e:
+            logger.error(f"Error detokenizing: {e}")
+            return ""
+
+    def get_exact_token_count(self, text: str) -> int:
+        """
+        Get exact token count using model's tokenizer
+
+        Args:
+            text: Text to count tokens for
+
+        Returns:
+            Exact number of tokens
+        """
+        try:
+            tokens = self.tokenize(text)
+            return len(tokens)
+        except Exception as e:
+            logger.error(f"Error counting tokens: {e}")
+            # Fallback to estimation
+            return len(text) // 4
+
     def estimate_tokens(self, text: str) -> int:
-        """Rough token count estimation"""
+        """
+        Rough token count estimation (for backward compatibility)
+
+        Note: Use get_exact_token_count() for accurate counting
+        """
         # Simple estimation: ~4 characters per token for most languages
         return len(text) // 4
+
+    def smart_truncate_to_tokens(
+        self,
+        text: str,
+        max_tokens: int,
+        from_end: bool = True
+    ) -> str:
+        """
+        Truncate text to exact token count
+
+        Args:
+            text: Text to truncate
+            max_tokens: Maximum number of tokens
+            from_end: If True, keep beginning; if False, keep end
+
+        Returns:
+            Truncated text with exactly max_tokens or less
+        """
+        try:
+            tokens = self.tokenize(text)
+
+            if len(tokens) <= max_tokens:
+                return text
+
+            if from_end:
+                # Keep beginning
+                truncated_tokens = tokens[:max_tokens]
+            else:
+                # Keep end
+                truncated_tokens = tokens[-max_tokens:]
+
+            return self.detokenize(truncated_tokens)
+
+        except Exception as e:
+            logger.error(f"Error truncating text: {e}")
+            # Fallback to character-based truncation
+            char_limit = max_tokens * 4
+            if from_end:
+                return text[:char_limit]
+            else:
+                return text[-char_limit:]
     
     def get_context_window_usage(self, prompt: str, max_tokens: int = None) -> Dict[str, Any]:
-        """Calculate context window usage"""
+        """
+        Calculate context window usage with exact token counting
+
+        Args:
+            prompt: Input prompt text
+            max_tokens: Maximum tokens to generate
+
+        Returns:
+            Dictionary with token usage statistics
+        """
         max_tokens = max_tokens or self.max_tokens
-        prompt_tokens = self.estimate_tokens(prompt)
+
+        # Use exact token counting instead of estimation
+        prompt_tokens = self.get_exact_token_count(prompt)
         total_available = self.context_length
-        
+
         return {
             'prompt_tokens': prompt_tokens,
             'max_new_tokens': max_tokens,

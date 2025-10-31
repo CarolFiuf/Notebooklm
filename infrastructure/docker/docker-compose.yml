@@ -16,7 +16,8 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../../config/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ../../config/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      # - ../../migrations/add_fulltext_search.sql:/docker-entrypoint-initdb.d/02_add_fulltext_search.sql:ro
     networks:
       - notebooklm-network
     healthcheck:

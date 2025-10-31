@@ -13,7 +13,7 @@ from src.utils.exceptions import DocumentProcessingError, UnsupportedFileTypeErr
 from src.utils.database import get_db_session, Document, DocumentChunk
 from src.utils.models import DocumentCreate
 from src.utils.file_utils import generate_file_hash, generate_content_hash, get_file_info
-from .extractors import PDFExtractor, TextExtractor
+from .extractors import PDFExtractor, TextExtractor, WordExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,8 @@ class DocumentProcessor:
         # Initialize extractors
         self.pdf_extractor = PDFExtractor()
         self.text_extractor = TextExtractor()
-        
+        self.word_extractor = WordExtractor()
+
         # Initialize text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
@@ -32,12 +33,14 @@ class DocumentProcessor:
             separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
             length_function=len
         )
-        
+
         # Supported file types mapping
         self.extractors = {
             '.pdf': self.pdf_extractor,
             '.txt': self.text_extractor,
-            '.md': self.text_extractor
+            '.md': self.text_extractor,
+            '.docx': self.word_extractor,
+            '.doc': self.word_extractor
         }
     
     def process_document(self, file_path: str, original_filename: str) -> Dict[str, Any]:
@@ -131,7 +134,7 @@ class DocumentProcessor:
                         'file_type': existing_docs.file_type,
                         'total_chunks': existing_docs.total_chunks,
                         'processing_status': existing_docs.processing_status,
-                        'metadata': existing_docs.metadata,
+                        'metadata': existing_docs.document_metadata,
                         'already_exists': True
                     }
                 
@@ -231,16 +234,23 @@ class DocumentProcessor:
             raise DocumentProcessingError(f"Chunk creation failed: {e}")
     
     def save_to_database(self, processed_doc: Dict[str, Any]) -> int:
-        """Save processed document and chunks to database"""
-        
+        """
+        🔧 FIXED: Save processed document and chunks with optimized bulk insert
+
+        Optimizations:
+        - Use bulk_insert_mappings for large chunk sets (>100 chunks)
+        - Batch commits to reduce transaction overhead
+        - Better error handling and rollback
+        """
+
         # If document already exists, return its ID
         if processed_doc.get('already_exists'):
             return processed_doc['id']
-        
+
         db = get_db_session()
         try:
             logger.info(f"Saving document to database: {processed_doc['original_filename']}")
-            
+
             # Create document record
             doc_record = Document(
                 filename=processed_doc['filename'],
@@ -250,23 +260,23 @@ class DocumentProcessor:
                 file_type=processed_doc['file_type'],
                 processing_status="processing",
                 total_chunks=processed_doc['total_chunks'],
-                metadata=processed_doc['metadata']
+                document_metadata=processed_doc['metadata']
             )
-            
+
             db.add(doc_record)
-            
+
             try:
                 db.flush()  # Get the ID without committing
             except IntegrityError as e:
                 if "duplicate key value violates unique constraint" in str(e):
                     db.rollback()
                     logger.warning(f"Document filename already exists, attempting to find existing record")
-                    
+
                     # Try to find the existing document
                     existing_doc = db.query(Document).filter(
                         Document.filename == processed_doc['filename']
                     ).first()
-                    
+
                     if existing_doc:
                         logger.info(f"Found existing document with ID: {existing_doc.id}")
                         return existing_doc.id
@@ -276,39 +286,63 @@ class DocumentProcessor:
                         timestamp_ms = int(time.time() * 1000)
                         file_hash = processed_doc['filename'].split('_')[0]
                         new_filename = f"{file_hash}_{timestamp_ms}_{processed_doc['original_filename']}"
-                        
+
                         doc_record.filename = new_filename
                         processed_doc['filename'] = new_filename
-                        
+
                         db.add(doc_record)
                         db.flush()
                         logger.info(f"Created new document with filename: {new_filename}")
                 else:
                     raise e
-            
-            # Save chunks
-            chunk_records = []
-            for chunk in processed_doc['chunks']:
-                chunk_record = DocumentChunk(
-                    document_id=doc_record.id,
-                    chunk_index=chunk['chunk_index'],
-                    content=chunk['content'],
-                    chunk_metadata=chunk['metadata']
-                )
-                chunk_records.append(chunk_record)
-            
-            db.add_all(chunk_records)
-            
+
+            # 🔧 FIX: Use bulk insert for better performance
+            chunks_count = len(processed_doc['chunks'])
+
+            if chunks_count > 100:
+                # For large documents, use bulk_insert_mappings (faster)
+                logger.info(f"Using bulk insert for {chunks_count} chunks")
+
+                chunk_mappings = []
+                for chunk in processed_doc['chunks']:
+                    chunk_mappings.append({
+                        'document_id': doc_record.id,
+                        'chunk_index': chunk['chunk_index'],
+                        'content': chunk['content'],
+                        'chunk_metadata': chunk['metadata']
+                    })
+
+                # Bulk insert in batches of 500
+                batch_size = 500
+                for i in range(0, len(chunk_mappings), batch_size):
+                    batch = chunk_mappings[i:i + batch_size]
+                    db.bulk_insert_mappings(DocumentChunk, batch)
+                    logger.debug(f"Inserted batch {i//batch_size + 1}/{(len(chunk_mappings)-1)//batch_size + 1}")
+            else:
+                # For small documents, use add_all (better for relationships)
+                logger.info(f"Using add_all for {chunks_count} chunks")
+                chunk_records = []
+                for chunk in processed_doc['chunks']:
+                    chunk_record = DocumentChunk(
+                        document_id=doc_record.id,
+                        chunk_index=chunk['chunk_index'],
+                        content=chunk['content'],
+                        chunk_metadata=chunk['metadata']
+                    )
+                    chunk_records.append(chunk_record)
+
+                db.add_all(chunk_records)
+
             # Update processing status
             doc_record.processing_status = "completed"
-            
+
             # Commit all changes
             db.commit()
             db.refresh(doc_record)
-            
-            logger.info(f"Document saved successfully with ID: {doc_record.id}")
+
+            logger.info(f"Document saved successfully with ID: {doc_record.id} ({chunks_count} chunks)")
             return doc_record.id
-            
+
         except Exception as e:
             db.rollback()
             logger.error(f"Error saving document to database: {e}")

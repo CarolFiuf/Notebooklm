@@ -6,7 +6,7 @@ import json
 class DocumentBase(BaseModel):
     """Base document model"""
     original_filename: str = Field(..., min_length=1, max_length=255)
-    file_type: str = Field(..., pattern=r'^\.(pdf|txt|md)$')
+    file_type: str = Field(..., pattern=r'^\.(pdf|txt|md|docx|doc)$')
     
     @validator('original_filename')
     def validate_filename(cls, v):
@@ -173,7 +173,7 @@ def document_db_to_response(document: 'Document') -> DocumentResponse:
         processing_status=document.processing_status,
         total_chunks=document.total_chunks,
         summary=document.summary,
-        metadata=document.metadata,
+        metadata=document.document_metadata,
         created_at=document.created_at
     )
 

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Page configuration
 st.set_page_config(
-    page_title="NotebookLM Clone",
+    page_title="NotebookLM",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -128,8 +128,8 @@ def handle_file_upload():
     uploaded_files = st.sidebar.file_uploader(
         "Choose files",
         accept_multiple_files=True,
-        type=['pdf', 'txt', 'md'],
-        help="Upload PDF, TXT, or Markdown files (max 100MB each)",
+        type=['pdf', 'txt', 'md', 'docx', 'doc'],
+        help="Upload PDF, TXT, Markdown, or Word files (max 100MB each)",
         key="file_uploader"
     )
     
@@ -165,11 +165,14 @@ def process_uploaded_file(uploaded_file):
             db = get_db_session()
             try:
                 doc = db.query(Document).filter(Document.id == document_id).first()
-                is_duplicate = hasattr(doc, 'already_exists') or 'already_exists' in str(doc.metadata or {})
-            except:
+                # Check document_metadata dict for 'already_exists' key
+                is_duplicate = doc and doc.document_metadata and doc.document_metadata.get('already_exists', False)
+            except Exception as e:
+                logger.error(f"Error checking duplicate status for document {document_id}: {e}")
                 is_duplicate = False
             finally:
-                db.close()
+                if db:
+                    db.close()
             
             if is_duplicate:
                 progress_bar.progress(100, text="Document already exists!")
@@ -199,6 +202,9 @@ def process_uploaded_file(uploaded_file):
                         unsafe_allow_html=True
                     )
             
+            # 🔧 FIX: Clear document cache before refresh to show new document
+            load_documents_from_db.clear()
+
             # Auto-refresh to show document status
             time.sleep(1)
             st.rerun()
@@ -212,12 +218,19 @@ def process_uploaded_file(uploaded_file):
         else:
             st.sidebar.error(f"Error processing {uploaded_file.name}: {str(e)}")
 
+@st.cache_data(ttl=300, show_spinner=False)  # 🔧 FIXED: Cache for 5 minutes (300s)
 def load_documents_from_db() -> List[Dict[str, Any]]:
-    """Load documents from database"""
+    """
+    🔧 FIXED: Load documents from database with optimized caching
+
+    Cache for 5 minutes to significantly reduce DB load.
+    Users can manually refresh using the "🔄 Refresh Documents" button.
+    """
+    db = None
     try:
         db = get_db_session()
         documents = db.query(Document).order_by(Document.upload_date.desc()).all()
-        
+
         doc_list = []
         for doc in documents:
             doc_dict = {
@@ -231,13 +244,17 @@ def load_documents_from_db() -> List[Dict[str, Any]]:
                 'summary': doc.summary
             }
             doc_list.append(doc_dict)
-        
-        db.close()
+
+        logger.debug(f"Loaded {len(doc_list)} documents from database (cached for 5min)")
         return doc_list
-        
+
     except Exception as e:
         logger.error(f"Error loading documents: {e}")
         return []
+    finally:
+        # ✅ Always close DB session to prevent connection leaks
+        if db:
+            db.close()
 
 def display_document_library():
     """Display document library in sidebar with duplicate status"""
@@ -384,6 +401,8 @@ def display_chat_interface(selected_doc_ids: List[int]):
         
         with col3:
             if st.button("🔄 Refresh Documents"):
+                # 🔧 FIX: Clear cache before rerunning
+                load_documents_from_db.clear()
                 st.rerun()
     
     # Display conversation history
@@ -535,7 +554,8 @@ def display_system_status():
                 qdrant_stats = stats.get('qdrant', {})
                 if 'total_vectors' in qdrant_stats:
                     st.write(f"**Vectors in Qdrant:** {qdrant_stats['total_vectors']}")
-            except:
+            except Exception as e:
+                logger.debug(f"Could not fetch Qdrant stats: {e}")
                 pass
             
 def display_footer():
