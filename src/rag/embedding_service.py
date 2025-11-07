@@ -7,6 +7,7 @@ from datetime import datetime
 import threading
 from collections import deque
 import time
+import os
 
 # from llama_cpp import Llama
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class EmbeddingService:
     """
-    🔧 FIXED: Service for generating embeddings with rate limiting and concurrency control
+    FIXED: Service for generating embeddings with rate limiting and concurrency control
 
     Features:
     - Thread-safe embedding generation
@@ -25,15 +26,17 @@ class EmbeddingService:
     - Request queue monitoring
     """
 
-    def __init__(self, max_concurrent_requests: int = 3):
+    def __init__(self, max_concurrent_requests: int = None):
         self.model_name = settings.EMBEDDING_MODEL_NAME
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = None
         self.embedding_dim = None
-
-        # 🔧 FIX: Add concurrency control
+        cpu_count = os.cpu_count()  # 🔧 FIX: Call the method
+        max_concurrent_requests = max(cpu_count//2, 4)
         self.max_concurrent = max_concurrent_requests
-        self._semaphore = threading.Semaphore(max_concurrent_requests)
+
+        # 🔧 FIX: Use self.max_concurrent_requests instead of parameter
+        self._semaphore = threading.Semaphore(self.max_concurrent)
         self._lock = threading.Lock()
 
         # 🔧 FIX: Request tracking for monitoring

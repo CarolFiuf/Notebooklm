@@ -4,16 +4,20 @@ from sqlalchemy.orm import sessionmaker, Session, relationship
 from datetime import datetime
 from typing import Generator
 import logging
+import os
 
 from config.config import settings
 
 logger = logging.getLogger(__name__)
 
+cpu_count = os.cpu_count()
+pool_size = cpu_count*2
+max_overflow = pool_size*2
 # Database setup
 engine = create_engine(
     settings.database_url,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=pool_size,
+    max_overflow=max_overflow,
     pool_pre_ping=True,
     echo=settings.DEBUG
 )

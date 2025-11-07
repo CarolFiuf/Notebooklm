@@ -124,7 +124,7 @@ class LlamaCppService:
             logger.exception("Error initializing llama.cpp")
             raise LLMServiceError(f"llama.cpp initialization failed: {e}")
     
-    @llm_retry  # ✅ Retry on transient failures (5 attempts, exponential backoff)
+    @llm_retry 
     def generate_response(
         self,
         prompt: str,
@@ -168,8 +168,7 @@ class LlamaCppService:
             # Generate response
             logger.debug(f"Generating response for prompt: {prompt[:100]}...")
 
-            with self._lock:
-                response = self.llm(**generation_kwargs)
+            response = self.llm(**generation_kwargs)
 
             # Extract generated text
             if response and "choices" in response and len(response["choices"]) > 0:

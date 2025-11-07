@@ -218,7 +218,7 @@ def process_uploaded_file(uploaded_file):
         else:
             st.sidebar.error(f"Error processing {uploaded_file.name}: {str(e)}")
 
-@st.cache_data(ttl=300, show_spinner=False)  # 🔧 FIXED: Cache for 5 minutes (300s)
+@st.cache_data(ttl=100, show_spinner=False)  
 def load_documents_from_db() -> List[Dict[str, Any]]:
     """
     🔧 FIXED: Load documents from database with optimized caching
