@@ -7,7 +7,7 @@ import threading
 
 from llama_cpp import Llama
 
-from config.config import settings
+from config.settings import settings
 from src.utils.exceptions import LLMServiceError
 from src.utils.retry_utils import llm_retry
 
@@ -35,55 +35,19 @@ class LlamaCppService:
         self._initialize_llm()
     
     def _ensure_model_exists(self):
-        """Ensure model file exists, download if necessary"""
+        """Check that model file exists (no auto-download)"""
         try:
             if not self.model_path.exists():
-                logger.info(f"Model not found at {self.model_path}")
-                self._download_model()
+                raise LLMServiceError(
+                    f"Model not found at {self.model_path}\n"
+                    f"Please download the model manually or place it in {self.model_path.parent}"
+                )
             else:
                 logger.info(f"Model found at {self.model_path}")
-                
+
         except Exception as e:
             logger.error(f"Error checking model: {e}")
             raise LLMServiceError(f"Model check failed: {e}")
-    
-    def _download_model(self):
-        """Download GGUF model from HuggingFace"""
-        try:
-            import requests
-            from tqdm import tqdm
-            
-            model_url = settings.LLM_MODEL_URL
-            if not model_url:
-                raise LLMServiceError("No model URL specified for download")
-            
-            logger.info(f"Downloading model from {model_url}")
-            logger.info("This may take a while depending on your connection...")
-            
-            # Create models directory
-            self.model_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Download with progress bar
-            response = requests.get(model_url, stream=True)
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(self.model_path, 'wb') as f:
-                with tqdm(total=total_size, unit='B', unit_scale=True, desc="Downloading") as pbar:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            pbar.update(len(chunk))
-            
-            logger.info(f"Model downloaded successfully to {self.model_path}")
-            
-        except Exception as e:
-            # Clean up partial download
-            if self.model_path.exists():
-                self.model_path.unlink()
-            logger.error(f"Model download failed: {e}")
-            raise LLMServiceError(f"Model download failed: {e}")
     
     def _initialize_llm(self):
         """Initialize llama.cpp engine"""
@@ -98,16 +62,15 @@ class LlamaCppService:
             self.llm = Llama(
                 model_path=str(self.model_path),
                 n_ctx=self.context_length,  # Context window
-                n_batch=safe_n_batch,  # Use safe batch size
+                n_batch=min(safe_n_batch, 512),  # Capped at 512 for stability
                 n_threads=min(self.n_threads, cpu_count),  # Cap to available CPUs
                 n_gpu_layers=self.n_gpu_layers,  # GPU layers (0 = CPU only)
-                verbose=self.verbose,
+                verbose=True,  # Enable verbose for debugging
                 use_mmap=True,  # Use memory mapping
                 use_mlock=False,  # Don't lock memory
                 seed=42,  # For reproducible results
                 logits_all=False,  # Don't compute all logits
                 embedding=False,  # Not used for embeddings
-                n_keep=512,  # Keep first 512 tokens when context is full
             )
             
             init_time = (datetime.now() - start_time).total_seconds()

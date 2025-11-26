@@ -12,7 +12,7 @@ from src.utils.logging_config import setup_logging
 setup_logging()
 
 # Import application components
-from config.config import settings
+from config.settings import settings
 from src.utils.database import init_database, get_db_session, Document
 from src.utils.file_utils import save_uploaded_file
 from src.processing.document_processor import process_and_save_document
@@ -31,7 +31,7 @@ st.set_page_config(
     menu_items={
         'Get Help': None,
         'Report a bug': None,
-        'About': "NotebookLM Clone - AI-powered document chat system"
+        'About': "Legal RAG - AI-powered document chat system"
     }
 )
 
@@ -91,8 +91,6 @@ def initialize_session_state():
         st.session_state.selected_documents = []
     if 'processing_status' not in st.session_state:
         st.session_state.processing_status = {}
-    if 'model_download_status' not in st.session_state:
-        st.session_state.model_download_status = 'not_started'
 
 @st.cache_resource
 def initialize_system():
@@ -118,12 +116,12 @@ def initialize_system():
 
 def display_header():
     """Display application header"""
-    st.markdown('<h1 class="main-header">📚 NotebookLM Clone</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">Legal RAG</h1>', unsafe_allow_html=True)
     st.markdown("---")
 
 def handle_file_upload():
     """Handle file upload in sidebar"""
-    st.sidebar.subheader("📤 Upload Documents")
+    st.sidebar.subheader("Upload Documents")
     
     uploaded_files = st.sidebar.file_uploader(
         "Choose files",
@@ -241,7 +239,8 @@ def load_documents_from_db() -> List[Dict[str, Any]]:
                 'upload_date': doc.upload_date,
                 'processing_status': doc.processing_status,
                 'total_chunks': doc.total_chunks,
-                'summary': doc.summary
+                'summary': doc.summary,
+                'document_metadata': doc.document_metadata or {}  # Include metadata for legal documents
             }
             doc_list.append(doc_dict)
 
@@ -273,7 +272,14 @@ def display_document_library():
     doc_options = {}
     for doc in documents:
         status_emoji = get_status_emoji(doc['processing_status'])
-        display_name = f"{status_emoji} {doc['filename'][:30]}{'...' if len(doc['filename']) > 30 else ''}"
+
+        # Add legal document indicator
+        legal_metadata = doc.get('document_metadata', {}).get('legal_metadata', {})
+        legal_indicator = ""
+        if legal_metadata and legal_metadata.get('document_type'):
+            legal_indicator = "⚖️ "  # Legal document indicator
+
+        display_name = f"{status_emoji} {legal_indicator}{doc['filename'][:30]}{'...' if len(doc['filename']) > 30 else ''}"
         doc_options[display_name] = doc['id']
     
     # Multi-select for documents
@@ -288,26 +294,70 @@ def display_document_library():
     
     # Display document details with duplicate info
     st.sidebar.subheader("Document Details")
-    
+
     for doc in documents[:5]:  # Show first 5 documents
         with st.sidebar.expander(f"{doc['filename'][:25]}..."):
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.write("**Type:**", doc['file_type'])
                 st.write("**Size:**", f"{doc['file_size'] / (1024*1024):.1f} MB")
-            
+
             with col2:
                 st.write("**Chunks:**", doc['total_chunks'])
                 st.write("**Status:**", format_status(doc['processing_status']))
-            
+
             st.write("**Uploaded:**", doc['upload_date'].strftime('%Y-%m-%d %H:%M'))
-            
+
+            # Show legal metadata if available
+            legal_metadata = doc.get('document_metadata', {}).get('legal_metadata', {})
+            if legal_metadata and legal_metadata.get('document_type'):
+                st.markdown("---")
+                st.markdown("**⚖️ Thông Tin Pháp Lý:**")
+
+                # Document type with hierarchy badge
+                doc_type = legal_metadata.get('document_type')
+                hierarchy = legal_metadata.get('hierarchy_level')
+                if doc_type:
+                    if hierarchy:
+                        st.write(f"📋 **Loại:** {doc_type} (Cấp {hierarchy})")
+                    else:
+                        st.write(f"📋 **Loại:** {doc_type}")
+
+                # Document number
+                doc_num = legal_metadata.get('document_number')
+                if doc_num:
+                    st.write(f"🔢 **Số hiệu:** {doc_num}")
+
+                # Issue date
+                issue_date = legal_metadata.get('issue_date')
+                if issue_date:
+                    st.write(f"📅 **Ban hành:** {issue_date}")
+
+                # Effective date
+                effective_date = legal_metadata.get('effective_date')
+                if effective_date:
+                    st.write(f"✅ **Hiệu lực:** {effective_date}")
+
+                # Issuing authority
+                authority = legal_metadata.get('issuing_authority')
+                if authority:
+                    st.write(f"🏛️ **Cơ quan:** {authority}")
+
+                # Related documents
+                replaces = legal_metadata.get('replaces', [])
+                if replaces:
+                    st.write(f"🔄 **Thay thế:** {', '.join(replaces[:2])}")
+
+                amended_by = legal_metadata.get('amended_by', [])
+                if amended_by:
+                    st.write(f"📝 **Sửa đổi bởi:** {', '.join(amended_by[:2])}")
+
             # Show duplicate warning if applicable
             processing_status = st.session_state.processing_status.get(doc['id'])
             if processing_status == "duplicate":
                 st.warning("This document is a duplicate of an existing file.")
-            
+
             # Generate summary button
             if st.button(f"Generate Summary", key=f"summary_{doc['id']}"):
                 generate_document_summary(doc['id'])
@@ -427,22 +477,45 @@ def display_conversation_history():
         with st.chat_message("assistant", avatar="🤖"):
             st.write(assistant_msg)
             
-            # Display sources if available
+            # Display sources with legal structure info
             if sources:
                 with st.expander(f"📚 Sources ({len(sources)} found)", expanded=False):
                     for j, source in enumerate(sources):
-                        st.markdown(f"**Source {j+1}: {source.get('document_filename', 'Unknown')}**")
-                        
+                        # Build source header with legal structure
+                        source_header = f"**Source {j+1}: {source.get('document_filename', 'Unknown')}**"
+
+                        # Add legal structure info if available
+                        metadata = source.get('metadata', {})
+                        legal_parts = []
+
+                        if metadata.get('chapter'):
+                            legal_parts.append(f"Chương {metadata['chapter']}")
+                        if metadata.get('section'):
+                            legal_parts.append(f"Mục {metadata['section']}")
+                        if metadata.get('article'):
+                            legal_parts.append(f"Điều {metadata['article']}")
+
+                        if legal_parts:
+                            source_header += f" *({' - '.join(legal_parts)})*"
+
+                        st.markdown(source_header)
+
                         col1, col2 = st.columns([3, 1])
                         with col1:
                             content_preview = source.get('content_preview', source.get('content', ''))
                             st.write(content_preview)
-                        
+
                         with col2:
                             score = source.get('score', 0)
                             st.metric("Relevance", f"{score:.3f}")
-                        
-                        st.markdown("---")
+
+                            # Show chunk type if legal document
+                            chunk_type = metadata.get('chunk_type')
+                            if chunk_type and chunk_type != 'standard':
+                                st.caption(f"Type: {chunk_type}")
+
+                        if j < len(sources) - 1:
+                            st.markdown("---")
 
 def handle_chat_input(selected_doc_ids: List[int]):
     """Handle chat input and response generation"""
@@ -456,7 +529,7 @@ def handle_chat_input(selected_doc_ids: List[int]):
         
         # Generate and display assistant response
         with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("🤔 Thinking..."):
+            with st.spinner("Thinking..."):
                 try:
                     # Query RAG system
                     response = st.session_state.rag_engine.query(
@@ -482,21 +555,43 @@ def handle_chat_input(selected_doc_ids: List[int]):
                     with col3:
                         st.caption(f"📄 Documents: {len(selected_doc_ids)}")
                     
-                    # Display sources
+                    # Display sources with legal structure info
                     if sources:
                         with st.expander(f"📚 Sources ({len(sources)} found)", expanded=False):
                             for i, source in enumerate(sources):
-                                st.markdown(f"**Source {i+1}: {source.get('document_filename', 'Unknown')}**")
-                                
+                                # Build source header with legal structure
+                                source_header = f"**Source {i+1}: {source.get('document_filename', 'Unknown')}**"
+
+                                # Add legal structure info if available
+                                metadata = source.get('metadata', {})
+                                legal_parts = []
+
+                                if metadata.get('chapter'):
+                                    legal_parts.append(f"Chương {metadata['chapter']}")
+                                if metadata.get('section'):
+                                    legal_parts.append(f"Mục {metadata['section']}")
+                                if metadata.get('article'):
+                                    legal_parts.append(f"Điều {metadata['article']}")
+
+                                if legal_parts:
+                                    source_header += f" *({' - '.join(legal_parts)})*"
+
+                                st.markdown(source_header)
+
                                 col1, col2 = st.columns([3, 1])
                                 with col1:
                                     content_preview = source.get('content_preview', source.get('content', ''))
                                     st.write(content_preview)
-                                
+
                                 with col2:
                                     score = source.get('score', 0)
                                     st.metric("Relevance", f"{score:.3f}")
-                                
+
+                                    # Show chunk type if legal document
+                                    chunk_type = metadata.get('chunk_type')
+                                    if chunk_type and chunk_type != 'standard':
+                                        st.caption(f"Type: {chunk_type}")
+
                                 if i < len(sources) - 1:
                                     st.markdown("---")
                     
@@ -518,7 +613,7 @@ def handle_chat_input(selected_doc_ids: List[int]):
 def display_system_status():
     """Display system status in sidebar - FIXED for Qdrant"""
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔧 System Status")
+    st.sidebar.subheader("System Status")
     
     if st.session_state.rag_engine:
         try:
@@ -526,9 +621,9 @@ def display_system_status():
             
             # CORRECT component names for Qdrant
             component_names = {
-                'embedding_service': '🧠 Embedding Service',
-                'vector_store': '🗃️ Qdrant Vector Store',  # ✅ Already correct
-                'llm_service': '🤖 LLM Service (llama.cpp)'  # ✅ Updated for llama.cpp
+                'embedding_service': 'Embedding Service',
+                'vector_store': 'Qdrant Vector Store',  # ✅ Already correct
+                'llm_service': 'LLM Service (llama.cpp)'  # ✅ Updated for llama.cpp
             }
             
             for component, status in health_status.items():
@@ -557,20 +652,7 @@ def display_system_status():
             except Exception as e:
                 logger.debug(f"Could not fetch Qdrant stats: {e}")
                 pass
-            
-def display_footer():
-    """Display application footer - FIXED"""
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        st.markdown(
-            '<div style="text-align: center; color: #666; padding: 1rem;">'
-            '🚀 <strong>NotebookLM Clone</strong> v1.0 | '
-            'Built with ❤️ using Streamlit, vLLM, and Qdrant' 
-            '</div>',
-            unsafe_allow_html=True
-        )
+        
 
 def main():
     """Main application function"""
@@ -603,8 +685,6 @@ def main():
         # Display system status
         display_system_status()
         
-        # Display footer
-        display_footer()
         
     except Exception as e:
         logger.error(f"Application error: {e}")

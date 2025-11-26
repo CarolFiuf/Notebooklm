@@ -51,9 +51,8 @@ class PDFExtractor:
                 # Combine all pages
                 text_content = "\n\n".join([doc.page_content for doc in documents])
 
-                # Extract metadata from first page
-                metadata = documents[0].metadata if documents else {}
-                metadata['total_pages'] = len(documents)
+                # 🔧 SIMPLIFIED: Only essential metadata
+                metadata = {}
                 extraction_method = 'pymupdf_langchain'
 
             except Exception as e:
@@ -67,8 +66,8 @@ class PDFExtractor:
 
                     text_content = "\n\n".join([doc.page_content for doc in documents])
 
-                    metadata = documents[0].metadata if documents else {}
-                    metadata['total_pages'] = len(documents)
+                    # 🔧 SIMPLIFIED: Only essential metadata
+                    metadata = {}
                     extraction_method = 'pdfplumber_langchain'
 
                 except Exception as e2:
@@ -82,9 +81,7 @@ class PDFExtractor:
                         f"PyMuPDF: {pymupdf_error}, PDFPlumber: {e2}"
                     )
 
-            # Set extraction method in metadata
-            if extraction_method:
-                metadata['extraction_method'] = extraction_method
+            # 🔧 SIMPLIFIED: Don't store extraction method (not needed in Qdrant)
 
             # Validate extraction
             if len(text_content.strip()) < self.min_text_length:
@@ -93,13 +90,8 @@ class PDFExtractor:
             # Clean extracted text
             text_content = clean_text(text_content)
 
-            # Add extraction stats
-            metadata.update({
-                'text_length': len(text_content),
-                'word_count': len(text_content.split()),
-                'using_langchain': True
-            })
-
+            # 🔧 SIMPLIFIED: No extraction stats in metadata (reduces bloat)
+            # Just log for debugging
             logger.info(f"✅ Extracted {len(text_content)} chars from {metadata.get('total_pages', 0)} pages")
 
             return text_content, metadata

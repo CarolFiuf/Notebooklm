@@ -12,6 +12,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from langchain.schema import Document as LangChainDocument
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,8 @@ class SemanticRetriever:
         self.vector_store = vector_store
 
         # Parameters
-        self.default_top_k = 10
-        self.semantic_threshold = 0.3
+        self.default_top_k = settings.TOP_K_RESULTS
+        self.semantic_threshold = settings.SEMANTIC_THRESHOLD
         self.diversity_threshold = 0.85
 
         # Metrics tracking
@@ -91,7 +92,7 @@ class SemanticRetriever:
         query: str,
         top_k: int = 5,
         document_ids: Optional[List[int]] = None,
-        min_score: float = 0.7
+        min_score: float = None
     ) -> List[Dict[str, Any]]:
         """
         ✅ MIGRATED: Search using LangChain with MMR
@@ -109,6 +110,10 @@ class SemanticRetriever:
             if not self.retriever:
                 logger.error("Retriever not initialized")
                 return []
+
+            # Use default threshold if not specified
+            if min_score is None:
+                min_score = self.semantic_threshold
 
             self.metrics['total_searches'] += 1
 
@@ -172,7 +177,7 @@ class SemanticRetriever:
         query_embedding,
         top_k: int = 5,
         document_ids: Optional[List[int]] = None,
-        min_score: float = 0.7
+        min_score: float = None
     ) -> List[Dict[str, Any]]:
         """
         ✅ Search by embedding vector
@@ -190,6 +195,10 @@ class SemanticRetriever:
             if not self.vector_store:
                 logger.error("Vector store not initialized")
                 return []
+
+            # Use default threshold if not specified
+            if min_score is None:
+                min_score = self.semantic_threshold
 
             # Use vector store's search_similar (already migrated)
             return self.vector_store.search_similar(

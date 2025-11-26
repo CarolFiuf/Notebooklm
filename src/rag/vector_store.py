@@ -12,7 +12,7 @@ from qdrant_client.models import (
 )
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from config.config import settings
+from config.settings import settings
 from src.utils.exceptions import VectorStoreError
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class QdrantVectorStore:
         # Use dimension from config as the single source of truth
         self.embedding_dim = int(settings.EMBEDDING_DIMENSION)
         self.api_key = settings.QDRANT_API_KEY
-        
+
         self.client = None
         self._connect()
         self._initialize_collection()
@@ -71,7 +71,7 @@ class QdrantVectorStore:
                 
                 # Get collection info
                 collection_info = self.client.get_collection(self.collection_name)
-                logger.info(f"Collection info: {collection_info.vectors_count} vectors")
+                logger.info(f"Collection info: {collection_info.points_count} points")
 
                 # Validate vector size matches embedding dimension
                 try:
@@ -252,61 +252,144 @@ class QdrantVectorStore:
         logger.error(f"Vector length: {len(sample_point.vector) if hasattr(sample_point.vector, '__len__') else 'unknown'}")
         logger.error(f"Payload keys: {list(sample_point.payload.keys()) if sample_point.payload else 'None'}")
         logger.error(f"Error: {error}")
-        
+
         # Check vector format
         if hasattr(sample_point.vector, '__len__'):
             vector = sample_point.vector
             if len(vector) > 0:
                 logger.error(f"First vector element type: {type(vector[0])}")
                 logger.error(f"Vector sample: {vector[:3]}...")
-    
+
+    def _build_query_filter(
+        self,
+        document_ids: Optional[List[int]],
+        metadata_filter: Optional[Dict[str, Any]]
+    ) -> Optional[Filter]:
+        """
+        ✅ NEW: Build Qdrant Filter from document_ids + metadata filter dict
+
+        Converts dict-based filter to Qdrant Filter object and combines with document_ids
+
+        Args:
+            document_ids: List of document IDs to filter
+            metadata_filter: Dict filter (e.g., {"should": [{"key": "metadata.article", "match": {...}}]})
+
+        Returns:
+            Qdrant Filter object or None
+        """
+        if not document_ids and not metadata_filter:
+            return None
+
+        # Build document_ids filter
+        doc_conditions = []
+        if document_ids:
+            if len(document_ids) == 1:
+                doc_conditions = [
+                    FieldCondition(key="document_id", match=MatchValue(value=document_ids[0]))
+                ]
+            else:
+                # Multiple doc IDs will be combined with should (OR)
+                doc_conditions = [
+                    FieldCondition(key="document_id", match=MatchValue(value=doc_id))
+                    for doc_id in document_ids
+                ]
+
+        # Convert metadata_filter dict to Qdrant conditions
+        metadata_conditions = []
+        if metadata_filter:
+            metadata_conditions = self._convert_dict_filter_to_conditions(metadata_filter)
+
+        # Combine filters
+        if doc_conditions and metadata_conditions:
+            # Both exist: wrap each in should/must and combine with must (AND)
+            if len(document_ids) == 1:
+                # ✅ FIX: Single doc ID: must match doc + (article1 OR article2 OR...)
+                # Wrap metadata conditions based on their type (should vs must)
+                if metadata_filter.get('should'):
+                    # Wrap should conditions in Filter(should=...)
+                    return Filter(must=doc_conditions + [Filter(should=metadata_conditions)])
+                else:
+                    # Keep must conditions flat
+                    return Filter(must=doc_conditions + metadata_conditions)
+            else:
+                # Multiple doc IDs: (doc1 OR doc2 OR...) AND (article filters)
+                return Filter(must=[
+                    Filter(should=doc_conditions),  # Wrap doc IDs in OR
+                    Filter(should=metadata_conditions) if metadata_filter.get('should') else Filter(must=metadata_conditions)
+                ])
+        elif doc_conditions:
+            # Only document IDs
+            if len(document_ids) == 1:
+                return Filter(must=doc_conditions)
+            else:
+                return Filter(should=doc_conditions)
+        elif metadata_conditions:
+            # Only metadata filter
+            if metadata_filter.get('should'):
+                return Filter(should=metadata_conditions)
+            else:
+                return Filter(must=metadata_conditions)
+
+        return None
+
+    def _convert_dict_filter_to_conditions(self, filter_dict: Dict[str, Any]) -> List[FieldCondition]:
+        """Convert dict filter to list of Qdrant FieldConditions"""
+        conditions = []
+
+        # Handle 'must' conditions
+        if 'must' in filter_dict:
+            for cond in filter_dict['must']:
+                if 'key' in cond and 'match' in cond:
+                    conditions.append(
+                        FieldCondition(key=cond['key'], match=MatchValue(value=cond['match']['value']))
+                    )
+
+        # Handle 'should' conditions
+        if 'should' in filter_dict:
+            for cond in filter_dict['should']:
+                if 'key' in cond and 'match' in cond:
+                    conditions.append(
+                        FieldCondition(key=cond['key'], match=MatchValue(value=cond['match']['value']))
+                    )
+
+        return conditions
+
     def search_similar(
         self,
         query_embedding: np.ndarray,
         top_k: int = 5,
         document_ids: Optional[List[int]] = None,
-        min_score: float = 0.0
+        min_score: float = 0.0,
+        metadata_filter: Optional[Dict[str, Any]] = None  # ✅ NEW: Metadata filter support
     ) -> List[Dict[str, Any]]:
         """
-        Search for similar embeddings
-        
+        Search for similar embeddings with optional metadata filtering
+
         Args:
             query_embedding: Query embedding vector
             top_k: Number of results to return
             document_ids: Filter by document IDs
             min_score: Minimum similarity score
-            
+            metadata_filter: Additional metadata filter (e.g., article filter)
+
         Returns:
             List of search results
         """
         try:
             query_vector = query_embedding.astype(np.float32).tolist()
+
+            # ✅ ENHANCED: Build combined filter (document_ids + metadata_filter)
+            query_filter = self._build_query_filter(document_ids, metadata_filter)
             
-            # ✅ FIXED: Proper filter construction for multiple document IDs
-            query_filter = None
-            if document_ids:
-                if len(document_ids) == 1:
-                    query_filter = Filter(
-                        must=[FieldCondition(key="document_id", match=MatchValue(value=document_ids[0]))]
-                    )
-                else:
-                    # For multiple IDs, use should (OR condition)
-                    query_filter = Filter(
-                        should=[
-                            FieldCondition(key="document_id", match=MatchValue(value=doc_id))
-                            for doc_id in document_ids
-                        ]
-                    )
-            
-            search_results = self.client.search(
+            search_results = self.client.query_points(
                 collection_name=self.collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=query_filter,
                 limit=top_k,
                 score_threshold=min_score,
                 with_payload=True,
                 with_vectors=False
-            )
+            ).points
             
             # Process results
             results = []
@@ -380,8 +463,6 @@ class QdrantVectorStore:
             
             stats = {
                 'collection_name': self.collection_name,
-                'total_vectors': collection_info.vectors_count or 0,
-                'indexed_vectors': collection_info.indexed_vectors_count or 0,
                 'points_count': collection_info.points_count or 0,
                 'vector_size': collection_info.config.params.vectors.size,
                 'distance_metric': collection_info.config.params.vectors.distance.value,
@@ -412,8 +493,6 @@ class QdrantVectorStore:
             return {
                 'name': self.collection_name,
                 'status': collection_info.status.value,
-                'vectors_count': collection_info.vectors_count,
-                'indexed_vectors_count': collection_info.indexed_vectors_count,
                 'points_count': collection_info.points_count,
                 'segments_count': collection_info.segments_count,
                 'vector_size': collection_info.config.params.vectors.size,

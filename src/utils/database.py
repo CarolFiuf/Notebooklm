@@ -6,7 +6,7 @@ from typing import Generator
 import logging
 import os
 
-from config.config import settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 

@@ -75,9 +75,7 @@ class WordExtractor:
                         f"python-docx: {docx_error}, docx2txt: {e2}"
                     )
 
-            # Set extraction method in metadata
-            metadata['extraction_method'] = extraction_method
-            metadata['file_extension'] = file_extension
+            # 🔧 SIMPLIFIED: Don't store extraction method or file extension (not needed in Qdrant)
 
             # Validate extraction
             if len(text_content.strip()) < self.min_text_length:
@@ -86,13 +84,8 @@ class WordExtractor:
             # Clean extracted text
             text_content = clean_text(text_content)
 
-            # Add extraction stats
-            metadata.update({
-                'text_length': len(text_content),
-                'word_count': len(text_content.split()),
-                'character_count': len(text_content)
-            })
-
+            # 🔧 SIMPLIFIED: No extraction stats in metadata (reduces bloat)
+            # Just log for debugging
             logger.info(
                 f"Extracted {len(text_content)} chars using {extraction_method}"
             )
@@ -140,28 +133,9 @@ class WordExtractor:
             if table_texts:
                 all_text += "\n\n=== Tables ===\n\n" + "\n".join(table_texts)
 
-            # Metadata
-            metadata = {
-                'paragraph_count': len(paragraphs),
-                'table_count': len(doc.tables),
-                'section_count': len(doc.sections)
-            }
-
-            # Try to extract core properties (may not always be available)
-            try:
-                core_props = doc.core_properties
-                if core_props.title:
-                    metadata['title'] = core_props.title
-                if core_props.author:
-                    metadata['author'] = core_props.author
-                if core_props.subject:
-                    metadata['subject'] = core_props.subject
-                if core_props.created:
-                    metadata['created'] = str(core_props.created)
-                if core_props.modified:
-                    metadata['modified'] = str(core_props.modified)
-            except Exception as e:
-                logger.debug(f"Could not extract document properties: {e}")
+            # 🔧 SIMPLIFIED: No document metadata (reduces bloat in Qdrant)
+            # Only return empty dict - legal_extractor will add relevant fields
+            metadata = {}
 
             return all_text, metadata
 
@@ -182,11 +156,8 @@ class WordExtractor:
             # Extract text
             text_content = docx2txt.process(file_path)
 
-            # Basic metadata
-            metadata = {
-                'extraction_method': 'docx2txt',
-                'note': 'Limited metadata available with docx2txt'
-            }
+            # 🔧 SIMPLIFIED: No metadata (reduces bloat)
+            metadata = {}
 
             return text_content, metadata
 

@@ -19,7 +19,7 @@ from langchain.schema import Document as LangChainDocument
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from src.utils.database import get_db_session, Document, DocumentChunk
-from config.config import settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 

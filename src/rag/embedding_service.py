@@ -8,13 +8,51 @@ import threading
 from collections import deque
 import time
 import os
+import re
+import unicodedata
 
 # from llama_cpp import Llama
 
-from config.config import settings
+from config.settings import settings
 from src.utils.exceptions import EmbeddingGenerationError
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_query(query: str) -> str:
+    """
+    ✅ NEW: Normalize query for better matching
+
+    Especially important for Vietnamese legal queries with:
+    - Case variations (điều vs Điều)
+    - Extra whitespace
+    - Vietnamese diacritics normalization
+
+    Args:
+        query: Raw query string
+
+    Returns:
+        Normalized query string
+    """
+    if not query:
+        return query
+
+    # Normalize Unicode characters (NFC form for Vietnamese)
+    query = unicodedata.normalize('NFC', query)
+
+    # Lowercase for consistent matching
+    query = query.lower()
+
+    # Normalize whitespace (multiple spaces → single space)
+    query = re.sub(r'\s+', ' ', query)
+
+    # Remove leading/trailing whitespace
+    query = query.strip()
+
+    # Remove trailing punctuation (but keep internal punctuation)
+    query = query.rstrip('.,;!?:')
+
+    return query
 
 class EmbeddingService:
     """
@@ -61,8 +99,9 @@ class EmbeddingService:
                 revision=None,  # Use main branch
                 local_files_only=False,  # Allow downloads if needed
                 model_kwargs={
-                    'torch_dtype': 'auto',  # Let torch decide
+                    'torch_dtype': torch.float32 if self.device == 'cpu' else torch.float16,
                     'attn_implementation': 'eager',  # Use eager attention
+                    'low_cpu_mem_usage': False,  # Prevent meta device initialization
                 }
             )
             
@@ -173,8 +212,8 @@ class EmbeddingService:
         """Generate embedding for a single text"""
         if not text or not text.strip():
             raise EmbeddingGenerationError("Empty text provided")
-        
-        embeddings = self.encode_texts([text.strip()], batch_size=1, 
+
+        embeddings = self.encode_texts([text.strip()], batch_size=1,
                                      show_progress=False, normalize=normalize)
         return embeddings[0]
     

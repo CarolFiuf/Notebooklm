@@ -1,7 +1,7 @@
 import logging
 import logging.handlers
 from pathlib import Path
-from config.config import settings
+from config.settings import settings
 
 def setup_logging():
     """Setup application logging with sane DEBUG/INFO defaults."""

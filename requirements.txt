@@ -10,13 +10,16 @@ sentence-transformers
 transformers
 
 # RAG & Vector DB
-llama-cpp-python==0.3.2
+llama-cpp-python>=0.3.16
 langchain>=0.1.0
 langchain-community>=0.0.38
 langchain-qdrant>=0.1.0  # LangChain Qdrant integration
 # pymilvus==2.3.4
 qdrant-client
 tenacity>=8.2.0  # Retry logic for error recovery
+
+# Reranking - Cross-encoder for better retrieval
+rank-bm25
 
 # Document processing
 pymupdf==1.23.8

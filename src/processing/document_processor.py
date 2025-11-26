@@ -8,28 +8,37 @@ from sqlalchemy.exc import IntegrityError
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document as LangChainDocument
 
-from config.config import settings
+from config.settings import settings
+from config.settings import LEGAL_CHUNKING_CONFIG
 from src.utils.exceptions import DocumentProcessingError, UnsupportedFileTypeError
 from src.utils.database import get_db_session, Document, DocumentChunk
 from src.utils.models import DocumentCreate
 from src.utils.file_utils import generate_file_hash, generate_content_hash, get_file_info
+from src.utils.legal_extractor import VietnameseLegalExtractor
 from .extractors import PDFExtractor, TextExtractor, WordExtractor
 
 logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
-    """Main document processing pipeline"""
-    
-    def __init__(self):
+    """Main document processing pipeline - Enhanced for Vietnamese Legal Documents"""
+
+    def __init__(self, use_legal_chunking: bool = True):
         # Initialize extractors
         self.pdf_extractor = PDFExtractor()
         self.text_extractor = TextExtractor()
         self.word_extractor = WordExtractor()
 
-        # Initialize text splitter
+        # Initialize legal extractor for Vietnamese legal documents
+        self.legal_extractor = VietnameseLegalExtractor()
+        self.use_legal_chunking = use_legal_chunking
+
+        # Initialize text splitter with legal-specific config
+        chunk_size = LEGAL_CHUNKING_CONFIG['chunk_size'] if use_legal_chunking else settings.CHUNK_SIZE
+        chunk_overlap = LEGAL_CHUNKING_CONFIG['chunk_overlap'] if use_legal_chunking else settings.CHUNK_OVERLAP
+
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
             separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
             length_function=len
         )
@@ -42,6 +51,9 @@ class DocumentProcessor:
             '.docx': self.word_extractor,
             '.doc': self.word_extractor
         }
+
+        logger.info(f"DocumentProcessor initialized with legal_chunking={use_legal_chunking}, "
+                   f"chunk_size={chunk_size}, overlap={chunk_overlap}")
     
     def process_document(self, file_path: str, original_filename: str) -> Dict[str, Any]:
         """
@@ -71,7 +83,23 @@ class DocumentProcessor:
             text_content, extraction_metadata = self._extract_text(
                 file_path, file_info['file_type']
             )
-            
+
+            # Step 3.5: Extract legal metadata if enabled (simplified - only essential fields)
+            legal_metadata = {}
+            if self.use_legal_chunking and text_content:
+                legal_metadata = self.legal_extractor.extract_metadata(text_content)
+
+                # 🔧 SIMPLIFIED: Only use essential legal metadata (4 fields)
+                # Override extraction_metadata with only legal fields
+                extraction_metadata = legal_metadata.copy()
+                extraction_metadata['is_legal_document'] = bool(legal_metadata.get('document_type'))
+
+                logger.info(f"Legal metadata extracted: {legal_metadata.get('document_type')} - "
+                           f"{legal_metadata.get('document_number')}")
+            else:
+                # For non-legal documents, clear all extraction metadata
+                extraction_metadata = {}
+
             # Step 4: Create chunks
             chunks = self._create_chunks(text_content, extraction_metadata)
             
@@ -194,44 +222,112 @@ class DocumentProcessor:
             raise DocumentProcessingError(f"Text extraction failed: {e}")
     
     def _create_chunks(self, text: str, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Create text chunks using LangChain text splitter"""
+        """
+        Create text chunks using legal-aware chunking or standard chunking
+
+        For Vietnamese legal documents, uses structure-aware chunking (Điều, Khoản, etc.)
+        For other documents, uses standard RecursiveCharacterTextSplitter
+        """
         try:
             if not text.strip():
                 logger.warning("Empty text provided for chunking")
                 return []
-            
-            # Create LangChain document
-            langchain_doc = LangChainDocument(page_content=text, metadata=metadata)
-            
-            # Split into chunks
-            chunks = self.text_splitter.split_documents([langchain_doc])
-            
-            # Convert to our format
-            chunk_list = []
-            for idx, chunk in enumerate(chunks):
-                chunk_content = chunk.page_content.strip()
-                
-                chunk_data = {
-                    'chunk_index': idx,
-                    'content': chunk_content,
-                    'metadata': {
-                        **chunk.metadata,
-                        'chunk_size': len(chunk_content),
-                        'chunk_id': f"chunk_{idx}",
-                        'chunk_hash': generate_content_hash(chunk_content)
-                    }
-                }
-                
-                # Only add non-empty chunks
-                if chunk_data['content']:
-                    chunk_list.append(chunk_data)
-            
-            logger.info(f"Created {len(chunk_list)} chunks from {len(text)} characters")
-            return chunk_list
-            
+
+            # Check if this is a legal document and use legal chunking
+            is_legal_doc = metadata.get('is_legal_document', False)
+
+            if self.use_legal_chunking and is_legal_doc:
+                logger.info("Using legal structure-aware chunking")
+                return self._create_legal_chunks(text, metadata)
+            else:
+                logger.info("Using standard chunking")
+                return self._create_standard_chunks(text, metadata)
+
         except Exception as e:
             logger.error(f"Error creating chunks: {e}")
             raise DocumentProcessingError(f"Chunk creation failed: {e}")
+
+    def _create_legal_chunks(self, text: str, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Create chunks using Vietnamese legal structure (Điều, Khoản, etc.)"""
+        try:
+            chunk_size = LEGAL_CHUNKING_CONFIG['chunk_size']
+            chunk_overlap = LEGAL_CHUNKING_CONFIG['chunk_overlap']
+
+            # Use legal extractor to split by structure
+            legal_chunks = self.legal_extractor.split_by_legal_structure(
+                text, chunk_size, chunk_overlap
+            )
+
+            # Convert to our format
+            chunk_list = []
+            for idx, legal_chunk in enumerate(legal_chunks):
+                chunk_content = legal_chunk['content'].strip()
+
+                # Build enhanced metadata
+                chunk_metadata = {
+                    **metadata,
+                    'chunk_size': len(chunk_content),
+                    'chunk_id': f"chunk_{idx}",
+                    'chunk_hash': generate_content_hash(chunk_content),
+                    'chunk_type': legal_chunk.get('type', 'unknown'),
+                }
+
+                # Add legal structure info if available
+                if 'article' in legal_chunk:
+                    chunk_metadata['article'] = legal_chunk['article']
+                if 'chapter' in legal_chunk:
+                    chunk_metadata['chapter'] = legal_chunk['chapter']
+                if 'section' in legal_chunk:
+                    chunk_metadata['section'] = legal_chunk['section']
+
+                chunk_data = {
+                    'chunk_index': idx,
+                    'content': chunk_content,
+                    'metadata': chunk_metadata
+                }
+
+                # Only add non-empty chunks
+                if chunk_data['content']:
+                    chunk_list.append(chunk_data)
+
+            logger.info(f"Created {len(chunk_list)} legal-aware chunks from {len(text)} characters")
+            return chunk_list
+
+        except Exception as e:
+            logger.error(f"Error in legal chunking, falling back to standard: {e}")
+            return self._create_standard_chunks(text, metadata)
+
+    def _create_standard_chunks(self, text: str, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Create chunks using standard LangChain text splitter"""
+        # Create LangChain document
+        langchain_doc = LangChainDocument(page_content=text, metadata=metadata)
+
+        # Split into chunks
+        chunks = self.text_splitter.split_documents([langchain_doc])
+
+        # Convert to our format
+        chunk_list = []
+        for idx, chunk in enumerate(chunks):
+            chunk_content = chunk.page_content.strip()
+
+            chunk_data = {
+                'chunk_index': idx,
+                'content': chunk_content,
+                'metadata': {
+                    **chunk.metadata,
+                    'chunk_size': len(chunk_content),
+                    'chunk_id': f"chunk_{idx}",
+                    'chunk_hash': generate_content_hash(chunk_content),
+                    'chunk_type': 'standard'
+                }
+            }
+
+            # Only add non-empty chunks
+            if chunk_data['content']:
+                chunk_list.append(chunk_data)
+
+        logger.info(f"Created {len(chunk_list)} standard chunks from {len(text)} characters")
+        return chunk_list
     
     def save_to_database(self, processed_doc: Dict[str, Any]) -> int:
         """

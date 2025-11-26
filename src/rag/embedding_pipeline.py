@@ -38,9 +38,9 @@ class EmbeddingPipeline:
                 raise ValueError(f"No valid chunks to embed for document {document_id}")
             
             logger.info(f"Generating embeddings for {len(texts)} chunks")
-            
-            # Generate embeddings
-            embeddings = self.embedding_service.encode_texts(texts)
+
+            # Generate embeddings in batches with progress reporting
+            embeddings = self._generate_embeddings_with_progress(texts)
             
             # Insert into vector store
             embedding_ids = self.vector_store.insert_embeddings(
@@ -72,6 +72,58 @@ class EmbeddingPipeline:
                 'error': str(e)
             }
     
+    def _generate_embeddings_with_progress(self, texts: List[str], batch_size: int = 500):
+        """
+        Generate embeddings in batches with progress reporting
+
+        Args:
+            texts: List of texts to encode
+            batch_size: Number of texts to process per batch (default: 500)
+
+        Returns:
+            numpy array of embeddings
+        """
+        import numpy as np
+
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        all_embeddings = []
+
+        logger.info(f"Processing {len(texts)} texts in {total_batches} batches of {batch_size}")
+
+        for i in range(0, len(texts), batch_size):
+            batch_num = i // batch_size + 1
+            batch_texts = texts[i:i + batch_size]
+
+            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch_texts)} texts)...")
+            batch_start = datetime.now()
+
+            # Generate embeddings for this batch
+            batch_embeddings = self.embedding_service.encode_texts(
+                batch_texts,
+                batch_size=32,  # Internal batch size for model
+                show_progress=False,  # Disable progress bar, we handle it
+                normalize=True
+            )
+
+            all_embeddings.append(batch_embeddings)
+
+            batch_time = (datetime.now() - batch_start).total_seconds()
+            texts_per_sec = len(batch_texts) / batch_time if batch_time > 0 else 0
+            remaining_texts = len(texts) - (i + len(batch_texts))
+            eta_seconds = remaining_texts / texts_per_sec if texts_per_sec > 0 else 0
+
+            logger.info(
+                f"Batch {batch_num}/{total_batches} completed in {batch_time:.2f}s "
+                f"({texts_per_sec:.1f} texts/sec). "
+                f"Remaining: {remaining_texts} texts, ETA: {eta_seconds/60:.1f} min"
+            )
+
+        # Concatenate all embeddings
+        final_embeddings = np.vstack(all_embeddings)
+        logger.info(f"Total embeddings generated: {final_embeddings.shape}")
+
+        return final_embeddings
+
     def _get_document_chunks(self, document_id: int) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Get document chunks and texts from database, filtering out empty content"""
         db = get_db_session()

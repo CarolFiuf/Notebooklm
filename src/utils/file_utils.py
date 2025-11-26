@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Union
 import logging
 
-from config.config import settings
+from config.settings import settings
 from .exceptions import FileProcessingError, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
