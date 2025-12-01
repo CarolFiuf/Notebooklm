@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     BM25_WEIGHT: float = 0.4  # Weight for BM25/keyword search (higher for exact match)
 
     # Document Processing & Chunking
-    CHUNK_SIZE: int = 1500  # Increased from 1200 to reduce broken chunks
+    CHUNK_SIZE: int = 20000  # Increased from 1200 to reduce broken chunks
     CHUNK_OVERLAP: int = 200  # Increased from 150 for better context
 
     # File Processing

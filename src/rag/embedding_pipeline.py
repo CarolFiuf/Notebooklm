@@ -98,9 +98,10 @@ class EmbeddingPipeline:
             batch_start = datetime.now()
 
             # Generate embeddings for this batch
+            # 🔧 FIX: Reduce batch_size from 32 to 1 to prevent OOM with large chunks
             batch_embeddings = self.embedding_service.encode_texts(
                 batch_texts,
-                batch_size=32,  # Internal batch size for model
+                batch_size=1,  # MUST be 1: batch_size=2/3 works but batch_size=4+ with 14KB+ chunks causes OOM
                 show_progress=False,  # Disable progress bar, we handle it
                 normalize=True
             )

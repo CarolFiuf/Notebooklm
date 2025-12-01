@@ -1,17 +1,17 @@
 """
-✅ MIGRATED: LangChain-based Hybrid Retriever with Reranking
+MIGRATED: LangChain-based Hybrid Retriever with Reranking
 
 Best retrieval pipeline:
 1. Hybrid search (Semantic + BM25 via Ensemble)
 2. Cross-encoder reranking for precision
-3. Article-aware boosting for legal queries
+3. Article-aware filtering for legal queries
 
 Benefits:
 - Built-in Ensemble retrieval (semantic + keyword)
 - BM25 keyword search
 - Cross-encoder reranking for better relevance
 - Automatic score fusion (RRF)
-- Article-aware boosting for Vietnamese legal documents
+- Article-aware filtering for Vietnamese legal documents
 - Community maintained
 """
 import logging
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def extract_article_number(query: str) -> Optional[int]:
     """
-    ✅ NEW: Extract article number from Vietnamese legal query
+    Extract article number from Vietnamese legal query
 
     Examples:
         "điều 51" → 51
@@ -72,7 +72,7 @@ def get_reranker():
 
 def build_article_context_filter(article_num: int, context_range: int = 1) -> Dict[str, Any]:
     """
-    ✅ NEW: Build Qdrant filter for article with context
+    Build Qdrant filter for article with context
 
     Returns filter for target article + surrounding articles (article±range)
     This provides context while keeping search focused
@@ -111,7 +111,7 @@ def build_article_context_filter(article_num: int, context_range: int = 1) -> Di
 
 class HybridRetriever:
     """
-    ✅ MIGRATED: Hybrid retriever using LangChain
+    Hybrid retriever using LangChain
 
     Combines semantic (vector) and keyword (BM25) search
     """
@@ -154,11 +154,11 @@ class HybridRetriever:
         }
 
         rerank_status = "enabled" if self._reranker else "disabled"
-        logger.info(f"✅ Hybrid Retriever initialized (LangChain Ensemble, reranking: {rerank_status})")
+        logger.info(f"Hybrid Retriever initialized (LangChain Ensemble, reranking: {rerank_status})")
 
     def initialize_bm25(self, documents: List[LangChainDocument]):
         """
-        ✅ Initialize BM25 retriever with documents
+        Initialize BM25 retriever with documents
 
         Args:
             documents: List of LangChain documents
@@ -170,11 +170,11 @@ class HybridRetriever:
 
             logger.info(f"Initializing BM25 with {len(documents)} documents")
 
-            # ✅ Create BM25 retriever
+            # Create BM25 retriever
             self.bm25_retriever = BM25Retriever.from_documents(documents)
             self.bm25_retriever.k = 10
 
-            # ✅ Create ensemble retriever
+            # Create ensemble retriever
             if self.semantic_retriever.retriever:
                 self.ensemble_retriever = EnsembleRetriever(
                     retrievers=[
@@ -183,7 +183,7 @@ class HybridRetriever:
                     ],
                     weights=[self.semantic_weight, self.keyword_weight]
                 )
-                logger.info("✅ Ensemble retriever created (70% semantic, 30% keyword)")
+                logger.info("Ensemble retriever created (70% semantic, 30% keyword)")
             else:
                 logger.warning("Semantic retriever not available, using BM25 only")
                 self.ensemble_retriever = self.bm25_retriever
@@ -279,17 +279,16 @@ class HybridRetriever:
         document_ids: Optional[List[int]] = None,
         use_hybrid: bool = True,
         use_reranking: bool = None,
-        enable_smart_filtering: bool = True  # ✅ NEW: Smart filtering for articles
+        enable_smart_filtering: bool = True  # NEW: Smart filtering for articles
     ) -> List[Dict[str, Any]]:
         """
-        ✅ ENHANCED: Hybrid search with Smart Filtering + Boosting
+        ENHANCED: Hybrid search with Smart Filtering
 
         Pipeline:
         1. Detect article from query → Build context filter (article ± 1)
         2. Retrieve candidates via Ensemble (semantic + BM25) with filter
-        3. Boost main article scores × 100
-        4. Rerank with cross-encoder for better relevance
-        5. Return top_k results
+        3. Rerank with cross-encoder for better relevance
+        4. Return top_k results
 
         Args:
             query: Search query
@@ -305,7 +304,7 @@ class HybridRetriever:
         try:
             self.metrics['total_searches'] += 1
 
-            # ✅ NEW: Detect article EARLY for smart filtering
+            # NEW: Detect article EARLY for smart filtering
             article_num = extract_article_number(query) if enable_smart_filtering else None
             metadata_filter = None
 
@@ -321,7 +320,7 @@ class HybridRetriever:
             # Fetch more candidates if reranking (3x for better rerank quality)
             fetch_k = top_k * 3 if should_rerank else top_k
 
-            # ✅ ENHANCED: Force native search if smart filtering is enabled
+            # ENHANCED: Force native search if smart filtering is enabled
             # BM25/LangChain retrievers don't support metadata filtering properly
             force_native = metadata_filter is not None
 
@@ -331,7 +330,7 @@ class HybridRetriever:
                 retriever = None
                 logger.debug("🔒 Forcing native search for metadata filtering")
             else:
-                # ✅ Ensure BM25 is initialized for hybrid search
+                # Ensure BM25 is initialized for hybrid search
                 if use_hybrid and self.ensemble_retriever is None:
                     self.ensure_bm25_initialized(document_ids)
 
@@ -347,7 +346,7 @@ class HybridRetriever:
                     retriever = None
 
             if not retriever:
-                # ✅ Fallback: Use native vector store search
+                # Fallback: Use native vector store search
                 logger.debug("Using native vector store search (no LangChain retriever)")
                 self.metrics['semantic_only'] += 1
 
@@ -357,7 +356,7 @@ class HybridRetriever:
                     logger.error("No retriever or vector store available")
                     return []
 
-                # ✅ FIX: Lower threshold when using metadata filter
+                # Lower threshold when using metadata filter
                 # Article filters already narrow down results, so we don't need high score threshold
                 effective_threshold = 0.0 if metadata_filter else settings.SEMANTIC_THRESHOLD
                 if metadata_filter:
@@ -391,11 +390,7 @@ class HybridRetriever:
 
                 return native_results
 
-            if not retriever:
-                logger.error("No retriever available")
-                return []
-
-            # ✅ ENHANCED: Build combined filter (document_ids + metadata filter)
+            #  ENHANCED: Build combined filter (document_ids + metadata filter)
             if hasattr(retriever, 'search_kwargs'):
                 combined_filter = self._build_combined_filter(document_ids, metadata_filter)
                 if combined_filter:
@@ -404,8 +399,7 @@ class HybridRetriever:
                         logger.debug(f"Applied smart filter: {combined_filter}")
                     else:
                         logger.debug(f"Applied document filter: document_ids={document_ids}")
-
-            # ✅ Retrieve documents (fetch more for reranking)
+            # Retrieve documents (fetch more for reranking)
             docs = retriever.get_relevant_documents(query)
 
             # Convert to expected format (backward compatible)
@@ -422,43 +416,7 @@ class HybridRetriever:
                 }
                 results.append(result)
 
-            # ✅ ENHANCED: Apply article-aware boosting BEFORE reranking
-            # Note: article_num already detected earlier if enable_smart_filtering=True
-            if article_num and results:
-                filter_msg = "with smart filter" if metadata_filter else "without filter"
-                logger.info(f"📊 Applying article boosting for Điều {article_num} ({filter_msg})")
-
-                boosted_count = 0
-                for result in results:
-                    result_article = result.get('metadata', {}).get('article')
-
-                    if result_article == article_num:
-                        # Boost matching articles by 100x
-                        original_score = result.get('score', 0)
-                        result['score'] = original_score * 100.0
-                        result['article_boosted'] = True
-                        result['original_score'] = original_score
-                        boosted_count += 1
-                        logger.debug(f"  ✅ Boosted Article {article_num}: "
-                                   f"{original_score:.4f} → {result['score']:.4f}")
-
-                if boosted_count > 0:
-                    # Re-sort by boosted scores
-                    results.sort(key=lambda x: x.get('score', 0), reverse=True)
-                    logger.info(f"  ✅ Boosted {boosted_count} chunks for Điều {article_num}")
-
-                    # Update retrieval method to indicate filtering + boosting
-                    for result in results:
-                        if result.get('article_boosted'):
-                            current_method = result.get('retrieval_method', 'unknown')
-                            if metadata_filter:
-                                result['retrieval_method'] = f"{current_method}+article_filter+boost"
-                            else:
-                                result['retrieval_method'] = f"{current_method}+article_boost"
-                else:
-                    logger.warning(f"  ⚠️  No chunks found with article={article_num} in results!")
-
-            # ✅ Apply reranking if enabled
+            # Apply reranking if enabled
             if should_rerank and results:
                 logger.debug(f"Reranking {len(results)} candidates...")
                 results = self._reranker.rerank(
@@ -469,21 +427,9 @@ class HybridRetriever:
                 )
                 self.metrics['reranked_searches'] += 1
 
-                # Update retrieval method
+                # Update retrieval method to indicate reranking
                 for result in results:
-                    # Preserve article filter/boost indicators if present
-                    current_method = result.get('retrieval_method', '')
-                    if 'article_filter+boost' in current_method:
-                        # Already has filter+boost, just add rerank
-                        result['retrieval_method'] = current_method.replace(
-                            '+article_filter+boost', '') + '+article_filter+boost+rerank'
-                    elif 'article_boost' in current_method:
-                        # Has boost only, add rerank
-                        result['retrieval_method'] = current_method.replace(
-                            '+article_boost', '') + '+article_boost+rerank'
-                    else:
-                        # No article processing, standard rerank
-                        result['retrieval_method'] = 'hybrid+rerank' if use_hybrid else 'semantic+rerank'
+                    result['retrieval_method'] = 'hybrid+rerank' if use_hybrid else 'semantic+rerank'
 
                 logger.debug(f"Reranked to {len(results)} results")
             else:
@@ -518,7 +464,7 @@ class HybridRetriever:
         keyword_weight: float = None
     ) -> List[Dict[str, Any]]:
         """
-        ✅ MIGRATED: Hybrid search with custom weights
+        MIGRATED: Hybrid search with custom weights
 
         Args:
             query: Search query
@@ -555,7 +501,7 @@ class HybridRetriever:
         top_k: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        ✅ Semantic search only (no keyword)
+        Semantic search only (no keyword)
 
         Args:
             query: Search query
@@ -573,7 +519,7 @@ class HybridRetriever:
         top_k: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        ✅ Keyword search only (BM25)
+        Keyword search only (BM25)
 
         Args:
             query: Search query
@@ -587,7 +533,7 @@ class HybridRetriever:
                 logger.warning("BM25 retriever not initialized")
                 return []
 
-            # ✅ Use BM25 retriever
+            # Use BM25 retriever
             docs = self.bm25_retriever.get_relevant_documents(query)
 
             # Convert to expected format
@@ -616,7 +562,7 @@ class HybridRetriever:
         metadata_filter: Optional[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
         """
-        ✅ NEW: Build combined Qdrant filter from document_ids + metadata filter
+        Build combined Qdrant filter from document_ids + metadata filter
 
         Combines:
         - document_ids filter (if provided)

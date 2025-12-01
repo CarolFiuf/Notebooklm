@@ -5,16 +5,24 @@ import logging
 logger = logging.getLogger(__name__)
 
 def clean_text(text: str) -> str:
-    """Clean and normalize text"""
+    """Clean and normalize text while preserving line structure"""
     if not text:
         return ""
-    
-    # Remove excessive whitespace
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Remove special characters but keep basic punctuation
-    text = re.sub(r'[^\w\s\.,!?;:()-]', '', text)
-    
+
+    # FIX: Preserve newlines for legal document structure
+    # Normalize whitespace within lines but keep line breaks
+    lines = text.split('\n')
+    lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in lines]
+    text = '\n'.join(lines)
+
+    # Remove excessive blank lines (3+ newlines → 2 newlines max)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # Remove special characters but keep basic punctuation AND quotation marks (including smart quotes)
+    # Keep quotes (both regular and smart quotes) to distinguish quoted Điều from real Điều
+    # Smart quotes: " " ' ' (U+201C, U+201D, U+2018, U+2019)
+    text = re.sub(r'[^\w\s\.,!?;:()\"\'\u201C\u201D\u2018\u2019\-]', '', text)
+
     # Strip and return
     return text.strip()
 

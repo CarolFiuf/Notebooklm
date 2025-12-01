@@ -6,6 +6,7 @@ Supports:
 - .doc files (legacy format via docx2txt fallback)
 """
 import logging
+import re
 from typing import Tuple, Dict, Any
 from pathlib import Path
 
@@ -110,10 +111,20 @@ class WordExtractor:
             doc = Document(file_path)
 
             # Extract text from paragraphs
+            # 🔧 NEW: Thêm line break trước paragraph in đậm (thường là tiêu đề Điều)
             paragraphs = []
             for para in doc.paragraphs:
                 text = para.text.strip()
                 if text:
+                    # Check if paragraph is bold (main article title)
+                    is_bold = any(run.bold for run in para.runs if run.text.strip())
+
+                    # If bold and starts with "Điều X.", force new line
+                    if is_bold and re.match(r'Điều\s+\d+\.', text, re.IGNORECASE):
+                        # Ensure previous paragraph ends properly
+                        if paragraphs and not paragraphs[-1].endswith('\n'):
+                            paragraphs[-1] += '\n'
+
                     paragraphs.append(text)
 
             # Extract text from tables

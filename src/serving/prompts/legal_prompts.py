@@ -1,10 +1,6 @@
 
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 
-# ============================================================================
-# SYSTEM PROMPTS - Vietnamese Legal Domain
-# ============================================================================
-
 LEGAL_SYSTEM_PROMPT = """Bạn là trợ lý AI chuyên về pháp luật Việt Nam, giúp người dùng tra cứu và hiểu rõ các văn bản pháp luật.
 
 Nguyên tắc làm việc:
@@ -49,6 +45,7 @@ Phân tích ý nghĩa, phạm vi áp dụng, đối tượng áp dụng của qu
 
 **3. LƯU Ý**
 Các điều kiện, ngoại lệ, quy định liên quan khác cần biết.
+Không đưa ra phần suy nghĩ của mình ở câu trả lời cuối cùng
 
 Trả lời:"""
 

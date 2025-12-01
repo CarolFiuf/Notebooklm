@@ -26,16 +26,15 @@ class VietnameseLegalExtractor:
             'part': re.compile(r'Phần\s+(?:thứ\s+)?([IVXLCDM]+|[A-Z]+)', re.IGNORECASE),
             'chapter': re.compile(r'Chương\s+([IVXLCDM]+)', re.IGNORECASE),
             'section': re.compile(r'Mục\s+(\d+)', re.IGNORECASE),
-            # ✅ FIXED: Điều pattern không yêu cầu dấu chấm
-            # Match: "Điều X." hoặc "Điều X " hoặc "Điều X\n"
-            'article': re.compile(r'Điều\s+(\d+)', re.IGNORECASE),
-            # 🔧 FIX: Pattern cho "Khoản X" và số đầu dòng "1. ", "2. "
+            # 🔧 FIX: Chỉ match "Điều X." ở đầu dòng để tránh nhầm với Điều trong ngoặc kép hoặc tham chiếu
+            'article': re.compile(r'^Điều\s+(\d+)\.', re.IGNORECASE | re.MULTILINE),
+            #  FIX: Pattern cho "Khoản X" và số đầu dòng "1. ", "2. "
             'clause': re.compile(r'(?:Khoản\s+(\d+)|^(\d+)\.\s+[A-ZÀÁẢÃẠ])', re.IGNORECASE | re.MULTILINE),
             'numbered_item': re.compile(r'^(\d+)\.\s+', re.MULTILINE),  # "1. Hoạt động...", "2. Chạy tàu..."
             'point': re.compile(r'[Đ|đ]iểm\s+([a-z])', re.IGNORECASE),
         }
 
-        # 🔧 SIMPLIFIED: Chỉ giữ patterns thiết yếu
+        # SIMPLIFIED: Chỉ giữ patterns thiết yếu
         self.metadata_patterns = {
             # Số hiệu văn bản (hỗ trợ format "Luật số: 95/2025/QH15")
             'document_number': re.compile(
@@ -181,7 +180,6 @@ class VietnameseLegalExtractor:
         # Làm sạch text trước
         text = self.preprocess_text(text)
 
-        # ✅ CHỈ GIỮ 4 METADATA THIẾT YẾU
         metadata = {
             'document_type': None,        # Loại văn bản (Luật, Nghị định, Thông tư...)
             'document_number': None,      # Số hiệu (VD: 95/2025/QH15)

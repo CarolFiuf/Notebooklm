@@ -49,6 +49,39 @@ class LlamaCppService:
             logger.error(f"Error checking model: {e}")
             raise LLMServiceError(f"Model check failed: {e}")
     
+    def _strip_thinking_content(self, text: str) -> str:
+        """
+        ✅ NEW: Remove thinking/reasoning content from Qwen model output
+
+        Qwen models can output thinking in <think>...</think> tags.
+        We want to remove this and only return the actual answer.
+
+        Args:
+            text: Raw generated text
+
+        Returns:
+            Text with thinking content removed
+        """
+        import re
+
+        # Pattern 1: Remove <think>...</think> blocks
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+
+        # Pattern 2: If text still starts with thinking-like content, try to extract answer
+        # Some models might not use tags but still output "Okay, let me..." style thinking
+        if text.lower().startswith(('okay, let me', 'let me think', 'first, i', 'i need to')):
+            # Try to find where actual answer starts (usually after multiple sentences)
+            sentences = text.split('.')
+            # Skip first few thinking sentences, keep rest
+            if len(sentences) > 3:
+                text = '.'.join(sentences[3:]).strip()
+
+        # Clean up extra whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 newlines
+        text = text.strip()
+
+        return text
+
     def _initialize_llm(self):
         """Initialize llama.cpp engine"""
         try:
@@ -136,6 +169,10 @@ class LlamaCppService:
             # Extract generated text
             if response and "choices" in response and len(response["choices"]) > 0:
                 generated_text = response["choices"][0]["text"].strip()
+
+                # ✅ FIX: Remove thinking/reasoning content from Qwen models
+                # Qwen models use <think>...</think> tags for reasoning
+                generated_text = self._strip_thinking_content(generated_text)
 
                 logger.debug(f"Generated response: {generated_text[:100]}...")
                 return generated_text
