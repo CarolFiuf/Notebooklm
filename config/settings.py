@@ -53,9 +53,9 @@ class Settings(BaseSettings):
     LLM_CONTEXT_LENGTH: int = 2048  # Increased for Qwen3 compatibility
 
     # llama.cpp specific settings
-    LLAMACPP_N_GPU_LAYERS: int = 0
-    LLAMACPP_N_BATCH: int = 64  # Increased for better performance
-    LLAMACPP_N_THREADS: int = 4
+    LLAMACPP_N_GPU_LAYERS: int = -1  # -1 = offload all layers to GPU (0 = CPU only)
+    LLAMACPP_N_BATCH: int = 512  # Increased for better GPU performance
+    LLAMACPP_N_THREADS: int = 4  # CPU threads for non-GPU operations
     LLAMACPP_VERBOSE: bool = False
 
     # Embedding Configuration

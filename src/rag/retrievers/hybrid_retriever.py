@@ -18,9 +18,9 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 
-from langchain.retrievers import EnsembleRetriever
+from langchain_classic.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
-from langchain.schema import Document as LangChainDocument
+from langchain_core.documents import Document as LangChainDocument
 
 from src.rag.retrievers.semantic_retriever import SemanticRetriever
 from config.settings import settings

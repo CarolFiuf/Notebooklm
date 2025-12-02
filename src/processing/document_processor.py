@@ -5,8 +5,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.docstore.document import Document as LangChainDocument
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document as LangChainDocument
 
 from config.settings import settings
 from config.settings import LEGAL_CHUNKING_CONFIG

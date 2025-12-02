@@ -11,7 +11,7 @@ Benefits:
 import logging
 from typing import List, Dict, Any, Optional
 
-from langchain.schema import Document as LangChainDocument
+from langchain_core.documents import Document as LangChainDocument
 from config.settings import settings
 
 logger = logging.getLogger(__name__)

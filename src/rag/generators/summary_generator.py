@@ -13,10 +13,10 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from langchain.chains.summarize import load_summarize_chain
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_community.llms import LlamaCpp
-from langchain.schema import Document as LangChainDocument
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document as LangChainDocument
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.utils.database import get_db_session, Document, DocumentChunk
 from config.settings import settings
