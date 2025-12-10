@@ -8,7 +8,7 @@ import hashlib
 import re
 
 from config.settings import settings
-from src.rag.embedding_service import EmbeddingService
+from src.rag.embedding_service import EmbeddingService, LangChainEmbeddingAdapter
 from src.rag.vector_store import QdrantVectorStore
 from src.rag.retrievers.hybrid_retriever import HybridRetriever
 from src.rag.retrievers.semantic_retriever import SemanticRetriever
@@ -40,6 +40,11 @@ class RAGEngine:
             # Use config-only dimension in VectorStore
             self.vector_store = QdrantVectorStore()
             self.llm_service = LlamaCppService()
+
+            # ✅ Setup LangChain wrapper for semantic search
+            logger.info("Setting up LangChain integration for hybrid search...")
+            embedding_adapter = LangChainEmbeddingAdapter(self.embedding_service)
+            self.vector_store.setup_langchain_wrapper(embedding_adapter)
 
             # ✅ Initialize Hybrid Retriever with reranking
             semantic_retriever = SemanticRetriever(

@@ -21,6 +21,10 @@ tenacity>=8.2.0  # Retry logic for error recovery
 # Reranking - Cross-encoder for better retrieval
 rank-bm25
 
+# Evaluation - RAG evaluation metrics
+ragas>=0.1.0  # RAG Assessment framework
+datasets  # For evaluation dataset management
+
 # Document processing
 pymupdf==1.23.8
 pdfplumber==0.10.3

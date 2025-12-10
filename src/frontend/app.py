@@ -412,48 +412,75 @@ def generate_document_summary(document_id: int):
         st.sidebar.error(f"❌ Error generating summary: {str(e)}")
 
 def display_chat_interface(selected_doc_ids: List[int]):
-    """Display main chat interface"""
+    """Display main chat interface with dual modes: RAG (with docs) and Normal Chat (without docs)"""
     if not st.session_state.rag_engine:
         st.error("❌ System not initialized. Please check the logs and restart.")
         return
-    
+
+    # Mode indicator and chat header
     if not selected_doc_ids:
-        st.info("👈 Please upload and select documents from the sidebar to start chatting.")
-        st.markdown("""
-        ### 🚀 Getting Started
-        
-        1. **Upload Documents**: Use the sidebar to upload PDF, TXT, or Markdown files
-        2. **Wait for Processing**: Files will be processed automatically (text extraction + embeddings)
-        3. **Select Documents**: Choose which documents you want to chat with
-        4. **Start Chatting**: Ask questions about your documents!
-        
-        ### 💡 Tips
-        - You can chat with multiple documents at once
-        - Ask specific questions for better results
-        - The AI will cite sources from your documents
-        """)
-        return
-    
-    # Chat header
-    st.subheader("💬 Chat with Your Documents")
-    
-    # Display selected documents info
-    with st.expander("📚 Selected Documents", expanded=False):
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
+        # Normal Chat Mode (no documents)
+        col1, col2 = st.columns([3, 1])
         with col1:
-            st.write(f"**Chatting with {len(selected_doc_ids)} document(s)**")
-        
+            st.subheader("Normal Chat Mode")
         with col2:
-            if st.button("🗑️ Clear Chat History"):
-                st.session_state.conversation_history = []
-                st.rerun()
-        
-        with col3:
-            if st.button("🔄 Refresh Documents"):
-                # 🔧 FIX: Clear cache before rerunning
-                load_documents_from_db.clear()
-                st.rerun()
+            st.info("Direct LLM")
+
+        st.markdown("""
+        **Chatting directly with Qwen3-8B LLM** (no document context)
+
+        💡 **Tip**: Upload and select documents to enable RAG mode for document-based Q&A
+        """)
+    else:
+        # RAG Mode (with documents)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader("Chat with Your Documents")
+        with col2:
+            st.success(f"RAG Mode ({len(selected_doc_ids)} docs)")
+
+    # Show getting started info only if no conversation history and no documents
+    if not selected_doc_ids and not st.session_state.conversation_history:
+        with st.expander("🚀 Getting Started", expanded=True):
+            st.markdown("""
+            ### RAG Mode (Recommended for document Q&A)
+
+            1. **Upload Documents**: Use the sidebar to upload PDF, TXT, DOCX, or Markdown files
+            2. **Wait for Processing**: Files will be processed automatically (text extraction + embeddings)
+            3. **Select Documents**: Choose which documents you want to chat with
+            4. **Start Chatting**: Ask questions about your documents!
+
+            ### Normal Chat Mode (Current)
+
+            - Chat directly with the AI without document context
+            - Good for general questions and conversations
+            - No sources or citations will be provided
+
+            ### 💡 Tips
+            - You can switch between modes by selecting/deselecting documents
+            - RAG mode provides sources and citations from your documents
+            - Ask specific questions for better results in RAG mode
+            """)
+
+    # Show selected documents info (RAG mode only)
+    if selected_doc_ids:
+        # Display selected documents info
+        with st.expander("Selected Documents", expanded=False):
+            col1, col2, col3 = st.columns([2, 1, 1])
+
+            with col1:
+                st.write(f"**Chatting with {len(selected_doc_ids)} document(s)**")
+
+            with col2:
+                if st.button("🗑️ Clear Chat History"):
+                    st.session_state.conversation_history = []
+                    st.rerun()
+
+            with col3:
+                if st.button("🔄 Refresh Documents"):
+                    # 🔧 FIX: Clear cache before rerunning
+                    load_documents_from_db.clear()
+                    st.rerun()
     
     # Display conversation history
     display_conversation_history()
@@ -518,92 +545,210 @@ def display_conversation_history():
                             st.markdown("---")
 
 def handle_chat_input(selected_doc_ids: List[int]):
-    """Handle chat input and response generation"""
-    # Chat input
-    user_question = st.chat_input("Ask a question about your documents...")
-    
+    """Handle chat input and response generation - supports both RAG and Normal Chat modes"""
+
+    # Dynamic chat input placeholder based on mode
+    if selected_doc_ids:
+        placeholder = "Ask a question about your documents..."
+    else:
+        placeholder = "Ask me anything..."
+
+    user_question = st.chat_input(placeholder)
+
     if user_question:
         # Display user message immediately
         with st.chat_message("user", avatar="👤"):
             st.write(user_question)
-        
+
         # Generate and display assistant response
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Thinking..."):
                 try:
-                    # Query RAG system
-                    response = st.session_state.rag_engine.query(
-                        question=user_question,
-                        document_ids=selected_doc_ids,
-                        top_k=5,
-                        session_id=st.session_state.session_id
-                    )
-                    
-                    # Display answer
-                    answer = response['answer']
-                    sources = response.get('sources', [])
-                    response_time = response.get('response_time_ms', 0)
-                    
-                    st.write(answer)
-                    
-                    # Display response metrics
-                    col1, col2, col3 = st.columns([2, 1, 1])
-                    with col1:
-                        st.caption(f"⚡ Response time: {response_time}ms")
-                    with col2:
-                        st.caption(f"📊 Sources: {len(sources)}")
-                    with col3:
-                        st.caption(f"📄 Documents: {len(selected_doc_ids)}")
-                    
-                    # Display sources with legal structure info
-                    if sources:
-                        with st.expander(f"📚 Sources ({len(sources)} found)", expanded=False):
-                            for i, source in enumerate(sources):
-                                # Build source header with legal structure
-                                source_header = f"**Source {i+1}: {source.get('document_filename', 'Unknown')}**"
+                    if selected_doc_ids:
+                        # ========== RAG MODE ==========
+                        # Query RAG system with document context
+                        response = st.session_state.rag_engine.query(
+                            question=user_question,
+                            document_ids=selected_doc_ids,
+                            top_k=5,
+                            session_id=st.session_state.session_id
+                        )
 
-                                # Add legal structure info if available
-                                metadata = source.get('metadata', {})
-                                legal_parts = []
+                        # Display answer
+                        answer = response['answer']
+                        sources = response.get('sources', [])
+                        response_time = response.get('response_time_ms', 0)
 
-                                if metadata.get('chapter'):
-                                    legal_parts.append(f"Chương {metadata['chapter']}")
-                                if metadata.get('section'):
-                                    legal_parts.append(f"Mục {metadata['section']}")
-                                if metadata.get('article'):
-                                    legal_parts.append(f"Điều {metadata['article']}")
+                        st.write(answer)
 
-                                if legal_parts:
-                                    source_header += f" *({' - '.join(legal_parts)})*"
+                        # Display response metrics
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        with col1:
+                            st.caption(f"⚡ Response time: {response_time}ms")
+                        with col2:
+                            st.caption(f"📊 Sources: {len(sources)}")
+                        with col3:
+                            st.caption(f"📄 Documents: {len(selected_doc_ids)}")
 
-                                st.markdown(source_header)
+                        # Display sources with legal structure info
+                        if sources:
+                            with st.expander(f"📚 Sources ({len(sources)} found)", expanded=False):
+                                for i, source in enumerate(sources):
+                                    # Build source header with legal structure
+                                    source_header = f"**Source {i+1}: {source.get('document_filename', 'Unknown')}**"
 
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    content_preview = source.get('content_preview', source.get('content', ''))
-                                    st.write(content_preview)
+                                    # Add legal structure info if available
+                                    metadata = source.get('metadata', {})
+                                    legal_parts = []
 
-                                with col2:
-                                    score = source.get('score', 0)
-                                    st.metric("Relevance", f"{score:.3f}")
+                                    if metadata.get('chapter'):
+                                        legal_parts.append(f"Chương {metadata['chapter']}")
+                                    if metadata.get('section'):
+                                        legal_parts.append(f"Mục {metadata['section']}")
+                                    if metadata.get('article'):
+                                        legal_parts.append(f"Điều {metadata['article']}")
 
-                                    # Show chunk type if legal document
-                                    chunk_type = metadata.get('chunk_type')
-                                    if chunk_type and chunk_type != 'standard':
-                                        st.caption(f"Type: {chunk_type}")
+                                    if legal_parts:
+                                        source_header += f" *({' - '.join(legal_parts)})*"
 
-                                if i < len(sources) - 1:
-                                    st.markdown("---")
-                    
-                    # Add to conversation history
-                    st.session_state.conversation_history.append(
-                        (user_question, answer, sources)
-                    )
-                    
+                                    st.markdown(source_header)
+
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        content_preview = source.get('content_preview', source.get('content', ''))
+                                        st.write(content_preview)
+
+                                    with col2:
+                                        score = source.get('score', 0)
+                                        st.metric("Relevance", f"{score:.3f}")
+
+                                        # Show chunk type if legal document
+                                        chunk_type = metadata.get('chunk_type')
+                                        if chunk_type and chunk_type != 'standard':
+                                            st.caption(f"Type: {chunk_type}")
+
+                                    if i < len(sources) - 1:
+                                        st.markdown("---")
+
+                        # Add to conversation history
+                        st.session_state.conversation_history.append(
+                            (user_question, answer, sources)
+                        )
+
+                    else:
+                        # ========== NORMAL CHAT MODE ==========
+                        # Direct LLM call without document context
+                        import time
+                        start_time = time.time()
+
+                        # Build simple chat prompt
+                        chat_prompt = f"""Bạn là Trợ lý AI chuyên về pháp luật Việt Nam.
+
+Mục tiêu:
+- Giải thích các quy định pháp luật Việt Nam cho người dùng theo cách dễ hiểu.
+- Hỗ trợ người dùng hiểu rõ quyền, nghĩa vụ, thủ tục, khái niệm pháp lý… theo quy định pháp luật Việt Nam.
+- Chỉ cung cấp THÔNG TIN THAM KHẢO, KHÔNG phải tư vấn pháp lý chuyên nghiệp.
+
+Giới hạn & nguyên tắc chung:
+1. Bạn không phải là luật sư, không đại diện cho bất kỳ cơ quan nhà nước, tổ chức hành nghề luật sư hay cơ quan tiến hành tố tụng nào.
+2. Kiến thức của bạn về pháp luật có thể KHÔNG được cập nhật đầy đủ theo các văn bản, sửa đổi, bổ sung mới nhất.
+3. Luôn nhắc người dùng (ở phần Kết luận hoặc Lưu ý) rằng:
+   “Thông tin chỉ mang tính tham khảo, không thay thế ý kiến tư vấn của luật sư hoặc cơ quan có thẩm quyền.”
+4. Nếu câu hỏi quá cụ thể, có thể ảnh hưởng lớn đến quyền lợi (tranh chấp, tố tụng, hình sự, đất đai, thừa kế…), hãy:
+   - Giải thích NGUYÊN TẮC CHUNG của pháp luật liên quan.
+   - Đồng thời khuyến nghị người dùng liên hệ luật sư / cơ quan nhà nước để được hướng dẫn chính thức.
+5. Không được cố gắng khẳng định thay cho cơ quan tiến hành tố tụng, tòa án hoặc cơ quan nhà nước (ví dụ: “Tòa chắc chắn sẽ xử…”, “Công an sẽ làm…”).
+
+Cách trả lời:
+1. Luôn dùng tiếng Việt, văn phong rõ ràng, mạch lạc, dễ hiểu với người không chuyên luật.
+2. Khi có thể, hãy:
+   - Nêu tên văn bản (ví dụ: Bộ luật Dân sự, Bộ luật Hình sự, Luật Đất đai, Luật Hôn nhân và Gia đình…).
+   - Nêu nguyên tắc hoặc quy định điển hình (nếu bạn nhớ được ở mức tổng quan).
+3. Về việc trích dẫn điều luật:
+   - CHỈ nêu số điều, khoản, điểm, năm ban hành, số hiệu văn bản nếu bạn **thật sự chắc chắn**.
+   - Nếu không chắc, hãy nói chung ở mức nguyên tắc (“theo Bộ luật Dân sự quy định về hợp đồng…”) và nêu rõ là bạn không chắc số điều cụ thể.
+   - Tuyệt đối KHÔNG được bịa ra điều luật, số điều, số khoản hoặc nội dung chi tiết nếu không chắc.
+4. Cấu trúc câu trả lời khuyến nghị:
+   - **(1) Tóm tắt vấn đề người dùng hỏi**: 1–2 câu.
+   - **(2) Nguyên tắc pháp luật liên quan**: giải thích luật quy định theo hướng tổng quan.
+   - **(3) Áp dụng vào trường hợp chung**: mô tả vài kịch bản thường gặp, điều kiện, lưu ý.
+   - **(4) Kết luận + khuyến nghị**:
+       + Tóm lại ý chính.
+       + Nhắc lại: “Thông tin chỉ mang tính tham khảo, không thay thế ý kiến tư vấn của luật sư hoặc cơ quan có thẩm quyền.”
+       + Gợi ý người dùng nên làm gì tiếp theo (tìm hiểu văn bản nào, liên hệ cơ quan nào, gặp luật sư…).
+
+Xử lý khi không chắc chắn:
+1. Nếu bạn không chắc thông tin, hãy nói rõ:
+   - “Tôi không chắc quy định hiện hành có còn như vậy không.”
+   - Hoặc “Tôi không có đủ thông tin để khẳng định chính xác trong trường hợp này.”
+2. Không được bịa ra điều luật, số điều, số khoản hoặc nội dung cụ thể nếu bạn không nhớ rõ.
+3. Trong trường hợp thiếu thông tin (thời điểm xảy ra sự việc, loại hợp đồng, loại đất, tình trạng hôn nhân…), hãy nêu rõ:
+   - Những yếu tố nào có thể làm thay đổi câu trả lời.
+   - Gợi ý người dùng cung cấp thêm hoặc tham khảo luật sư.
+
+Giới hạn về hiển thị suy luận (thinking content):
+1. Bạn có thể suy luận nhiều bước ở bên trong để tìm câu trả lời phù hợp.
+2. Tuyệt đối KHÔNG hiển thị bất kỳ phần nào mô tả quá trình suy nghĩ nội bộ như:
+   - “Suy nghĩ: …”, “Phân tích: …”, “Reasoning: …”, “Chain-of-thought: …”, “Thought: …”
+   - Các câu kiểu “Hãy cùng phân tích từng bước”, “Let’s think step by step”, “Bước 1, Bước 2…” dùng để mô tả quá trình suy nghĩ của chính bạn.
+3. Chỉ hiển thị phần trả lời cuối cùng cho người dùng (giải thích, phân tích, ví dụ) theo cấu trúc đã nêu ở trên.
+
+Phong cách giao tiếp:
+- Lịch sự, khách quan, trung lập, không phán xét.
+- Tránh từ ngữ tuyệt đối như “chắc chắn 100%”, “đảm bảo thắng kiện”…  
+- Không xúi giục, khuyến khích vi phạm pháp luật, trốn thuế, lách luật, gian dối giấy tờ.
+- Không đưa ra kết luận mang tính “cam kết kết quả” (ví dụ: “chắc chắn thắng kiện”, “chắc chắn được bồi thường”).
+
+Ví dụ cách mở đầu câu trả lời:
+- “Theo các nguyên tắc chung của pháp luật Việt Nam về […], thông thường sẽ có các điểm sau: …”
+- “Với thông tin bạn cung cấp, tôi có thể giải thích một cách tổng quan như sau (không phải tư vấn pháp lý chính thức): …”
+- “Trong thực tế, quy định cụ thể có thể phụ thuộc vào từng văn bản và từng thời điểm. Bạn nên kiểm tra lại văn bản hiện hành hoặc hỏi ý kiến luật sư/chuyên gia.”
+
+User question: {user_question}
+
+Answer: """
+
+                        # 🔍 DEBUG: Log prompt being sent
+                        logger.info("=" * 80)
+                        logger.info("[NORMAL CHAT MODE] Prompt being sent to LLM:")
+                        logger.info("=" * 80)
+                        logger.info(chat_prompt)
+                        logger.info("=" * 80)
+
+                        # Call LLM service directly
+                        answer = st.session_state.rag_engine.llm_service.generate_response(
+                            prompt=chat_prompt,
+                            max_tokens=1024,
+                            temperature=0.7
+                        )
+
+                        # 🔍 DEBUG: Log final answer shown to user
+                        logger.info("[NORMAL CHAT MODE] Final answer shown to user:")
+                        logger.info("=" * 80)
+                        logger.info(answer)
+                        logger.info("=" * 80)
+
+                        response_time = int((time.time() - start_time) * 1000)
+
+                        # Display answer
+                        st.write(answer)
+
+                        # Display response metrics
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.caption(f"⚡ Response time: {response_time}ms")
+                        with col2:
+                            st.caption("Normal Chat Mode")
+
+                        # Add to conversation history (no sources)
+                        st.session_state.conversation_history.append(
+                            (user_question, answer, [])
+                        )
+
                 except Exception as e:
                     logger.error(f"Error in chat: {e}")
                     st.error(f"❌ Error generating response: {str(e)}")
-                    
+
                     # Add error to conversation history
                     error_response = f"I encountered an error: {str(e)}"
                     st.session_state.conversation_history.append(

@@ -6,11 +6,15 @@ from datetime import datetime
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    VectorParams, Distance, PointStruct, 
+    VectorParams, Distance, PointStruct,
     Filter, FieldCondition, MatchValue,
     ScoredPoint, CollectionInfo, FilterSelector
 )
 from qdrant_client.http.exceptions import UnexpectedResponse
+
+# LangChain integration for advanced retrieval
+from langchain_qdrant import QdrantVectorStore as LangChainQdrant
+from langchain_core.embeddings import Embeddings
 
 from config.settings import settings
 from src.utils.exceptions import VectorStoreError
@@ -29,6 +33,7 @@ class QdrantVectorStore:
         self.api_key = settings.QDRANT_API_KEY
 
         self.client = None
+        self.vector_store = None  # LangChain wrapper (initialized later)
         self._connect()
         self._initialize_collection()
     
@@ -106,13 +111,46 @@ class QdrantVectorStore:
                     distance=Distance.COSINE  # Cosine similarity
                 )
             )
-            
+
             logger.info(f"Collection '{self.collection_name}' created successfully")
-            
+
         except Exception as e:
             logger.error(f"Error creating collection: {e}")
             raise VectorStoreError(f"Collection creation failed: {e}")
-    
+
+    def setup_langchain_wrapper(self, embedding_service: Embeddings):
+        """
+        Setup LangChain wrapper for advanced retrieval features
+
+        This enables:
+        - MMR (Max Marginal Relevance) for diversity
+        - EnsembleRetriever for hybrid search
+        - LangChain retriever interface
+
+        Args:
+            embedding_service: LangChain-compatible embedding service
+        """
+        try:
+            if self.vector_store is not None:
+                logger.debug("LangChain wrapper already initialized")
+                return
+
+            logger.info("Setting up LangChain Qdrant wrapper...")
+
+            # Create LangChain Qdrant wrapper
+            self.vector_store = LangChainQdrant(
+                client=self.client,
+                collection_name=self.collection_name,
+                embedding=embedding_service,  # Note: 'embedding' not 'embeddings'
+            )
+
+            logger.info("✅ LangChain Qdrant wrapper initialized successfully")
+
+        except Exception as e:
+            logger.error(f"Error setting up LangChain wrapper: {e}")
+            logger.warning("Continuing without LangChain integration (semantic search will be limited)")
+            self.vector_store = None
+
     def insert_embeddings(
         self,
         document_id: int,

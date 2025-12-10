@@ -11,6 +11,9 @@ import os
 import re
 import unicodedata
 
+# LangChain compatibility
+from langchain_core.embeddings import Embeddings
+
 # from llama_cpp import Llama
 
 from config.settings import settings
@@ -255,4 +258,64 @@ class EmbeddingService:
                 'avg_wait_time_s': round(avg_wait_time, 3)
             }
         }
-    
+
+
+class LangChainEmbeddingAdapter(Embeddings):
+    """
+    LangChain-compatible adapter for EmbeddingService
+
+    Wraps EmbeddingService to provide LangChain's Embeddings interface
+    """
+
+    def __init__(self, embedding_service: EmbeddingService):
+        """
+        Initialize adapter with existing EmbeddingService
+
+        Args:
+            embedding_service: EmbeddingService instance to wrap
+        """
+        self.embedding_service = embedding_service
+        logger.info("✅ LangChain embedding adapter initialized")
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        Embed multiple documents (LangChain interface)
+
+        Args:
+            texts: List of text documents to embed
+
+        Returns:
+            List of embedding vectors as lists of floats
+        """
+        try:
+            # Use EmbeddingService to encode texts
+            embeddings = self.embedding_service.encode_texts(texts)
+
+            # Convert numpy arrays to lists of floats
+            return [embedding.tolist() for embedding in embeddings]
+
+        except Exception as e:
+            logger.error(f"Error embedding documents: {e}")
+            raise
+
+    def embed_query(self, text: str) -> List[float]:
+        """
+        Embed a single query (LangChain interface)
+
+        Args:
+            text: Query text to embed
+
+        Returns:
+            Embedding vector as list of floats
+        """
+        try:
+            # Use EmbeddingService to encode single text
+            embedding = self.embedding_service.encode_single_text(text)
+
+            # Convert numpy array to list of floats
+            return embedding.tolist()
+
+        except Exception as e:
+            logger.error(f"Error embedding query: {e}")
+            raise
+

@@ -71,8 +71,8 @@ class Settings(BaseSettings):
     ENABLE_RERANKING: bool = True
 
     # Hybrid Search Weights
-    SEMANTIC_WEIGHT: float = 0.6  # Weight for semantic/dense search (lower for exact queries)
-    BM25_WEIGHT: float = 0.4  # Weight for BM25/keyword search (higher for exact match)
+    SEMANTIC_WEIGHT: float = 0.7  # Weight for semantic/dense search (lower for exact queries)
+    BM25_WEIGHT: float = 0.3  # Weight for BM25/keyword search (higher for exact match)
 
     # Document Processing & Chunking
     CHUNK_SIZE: int = 20000  # Increased from 1200 to reduce broken chunks

@@ -51,10 +51,12 @@ class LlamaCppService:
     
     def _strip_thinking_content(self, text: str) -> str:
         """
-        ✅ NEW: Remove thinking/reasoning content from Qwen model output
+        ✅ IMPROVED: Remove thinking/reasoning content from Qwen model output
 
-        Qwen models can output thinking in <think>...</think> tags.
-        We want to remove this and only return the actual answer.
+        Qwen models can output thinking in multiple ways:
+        1. <think>...</think> tags
+        2. Thinking paragraphs starting with "Okay", "Let me", "I need to", etc.
+        3. Thinking content appearing ANYWHERE in the response (not just at start)
 
         Args:
             text: Raw generated text
@@ -65,16 +67,54 @@ class LlamaCppService:
         import re
 
         # Pattern 1: Remove <think>...</think> blocks
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
-        # Pattern 2: If text still starts with thinking-like content, try to extract answer
-        # Some models might not use tags but still output "Okay, let me..." style thinking
-        if text.lower().startswith(('okay, let me', 'let me think', 'first, i', 'i need to')):
-            # Try to find where actual answer starts (usually after multiple sentences)
-            sentences = text.split('.')
-            # Skip first few thinking sentences, keep rest
-            if len(sentences) > 3:
-                text = '.'.join(sentences[3:]).strip()
+        # Pattern 2: Remove thinking content that appears ANYWHERE in response
+        # Common thinking patterns (case-insensitive):
+        thinking_patterns = [
+            # English thinking patterns
+            r'\n\s*Okay,\s+let[\'s]?\s+',  # "Okay, let's" or "Okay, let"
+            r'\n\s*Let\s+me\s+',            # "Let me"
+            r'\n\s*I\s+need\s+to\s+',       # "I need to"
+            r'\n\s*First,?\s+I\s+',         # "First, I" or "First I"
+            r'\n\s*Wait,?\s+',              # "Wait," or "Wait"
+            r'\n\s*I\s+should\s+',          # "I should"
+            r'\n\s*Alright,?\s+',           # "Alright," or "Alright"
+            r'\n\s*So,?\s+the\s+user',      # "So, the user" or "So the user"
+            r'\n\s*The\s+user[\'s]?\s+(question|message|asked)',  # "The user's question"
+            r'\n\s*Okay\s+I\s+need\s+to',   # "Okay I need to"
+        ]
+
+        # Find the earliest thinking pattern in the text
+        earliest_pos = len(text)
+        for pattern in thinking_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                pos = match.start()
+                if pos < earliest_pos:
+                    earliest_pos = pos
+
+        # If thinking pattern found, cut everything from that point
+        if earliest_pos < len(text):
+            text = text[:earliest_pos].strip()
+            logger.debug(f"✂️ Stripped thinking content starting at position {earliest_pos}")
+
+        # Pattern 3: If text STARTS with thinking-like content (fallback)
+        # Some models might not have newlines before thinking
+        thinking_starts = [
+            'okay, let', 'let me', 'i need to', 'first, i',
+            'wait,', 'i should', 'alright,', 'so, the user'
+        ]
+        text_lower = text.lower()
+        for start_pattern in thinking_starts:
+            if text_lower.startswith(start_pattern):
+                # Try to find where actual answer starts (usually after multiple sentences)
+                sentences = text.split('.')
+                # Skip first few thinking sentences, keep rest
+                if len(sentences) > 3:
+                    text = '.'.join(sentences[3:]).strip()
+                    logger.debug(f"✂️ Stripped thinking at start with pattern: {start_pattern}")
+                break
 
         # Clean up extra whitespace
         text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 newlines
@@ -170,9 +210,22 @@ class LlamaCppService:
             if response and "choices" in response and len(response["choices"]) > 0:
                 generated_text = response["choices"][0]["text"].strip()
 
+                # 🔍 DEBUG: Log raw LLM output before stripping thinking content
+                logger.info("=" * 80)
+                logger.info("[RAW LLM OUTPUT - BEFORE STRIPPING]")
+                logger.info("=" * 80)
+                logger.info(generated_text)
+                logger.info("=" * 80)
+
                 # ✅ FIX: Remove thinking/reasoning content from Qwen models
                 # Qwen models use <think>...</think> tags for reasoning
                 generated_text = self._strip_thinking_content(generated_text)
+
+                # 🔍 DEBUG: Log cleaned output after stripping
+                logger.info("[CLEANED OUTPUT - AFTER STRIPPING]")
+                logger.info("=" * 80)
+                logger.info(generated_text)
+                logger.info("=" * 80)
 
                 logger.debug(f"Generated response: {generated_text[:100]}...")
                 return generated_text
