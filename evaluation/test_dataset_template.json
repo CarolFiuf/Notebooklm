@@ -1,0 +1,38 @@
+{
+  "description": "Test dataset for Vietnamese Legal RAG evaluation",
+  "created": "2025-12-11",
+  "test_cases": [
+    {
+      "id": 1,
+      "category": "article_lookup",
+      "question": "Điều 51 quy định gì?",
+      "ground_truth": "Điều 51 quy định về [điền nội dung chính xác từ văn bản pháp luật]",
+      "expected_articles": [51],
+      "difficulty": "easy"
+    },
+    {
+      "id": 2,
+      "category": "article_lookup",
+      "question": "Nội dung của Điều 55 là gì?",
+      "ground_truth": "Điều 55 quy định về [điền nội dung]",
+      "expected_articles": [55],
+      "difficulty": "easy"
+    },
+    {
+      "id": 3,
+      "category": "specific_requirement",
+      "question": "Thời gian làm việc tối đa trong một tuần là bao nhiêu?",
+      "ground_truth": "Thời gian làm việc tối đa là 48 giờ trong một tuần theo quy định",
+      "expected_articles": [104],
+      "difficulty": "medium"
+    },
+    {
+      "id": 4,
+      "category": "rights_obligations",
+      "question": "Người lao động có những quyền cơ bản nào?",
+      "ground_truth": "Người lao động có quyền: làm việc, được trả lương, nghỉ ngơi, an toàn lao động, tham gia tổ chức công đoàn...",
+      "expected_articles": [5, 6],
+      "difficulty": "hard"
+    }
+  ]
+}

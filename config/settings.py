@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.1
     LLM_TOP_P: float = 0.9
-    LLM_CONTEXT_LENGTH: int = 2048  # Increased for Qwen3 compatibility
+    LLM_CONTEXT_LENGTH: int = 4096  # Increased to 4096 to handle larger context windows
 
     # llama.cpp specific settings
     LLAMACPP_N_GPU_LAYERS: int = 0
@@ -86,6 +86,29 @@ class Settings(BaseSettings):
     STREAMLIT_SERVER_PORT: int = 8501
     STREAMLIT_SERVER_ADDRESS: str = "0.0.0.0"
 
+    # ========================================================================
+    # Evaluation Configuration (RAGAS)
+    # ========================================================================
+
+    # LLM for RAGAS Evaluation
+    EVAL_LLM_MODEL: str = "gpt-oss-120b"  # FPT Cloud model
+    EVAL_LLM_API_KEY: str = os.getenv("EVAL_LLM_API_KEY", os.getenv("FPT_API_KEY", os.getenv("OPENAI_API_KEY", "")))
+    EVAL_LLM_BASE_URL: str = os.getenv("EVAL_LLM_BASE_URL", "https://mkp-api.fptcloud.com/v1")
+    EVAL_LLM_MAX_RETRIES: int = 5
+    EVAL_LLM_TIMEOUT: int = 180  # seconds
+
+    # Embeddings for RAGAS Evaluation (can be different from LLM)
+    EVAL_EMBEDDING_MODEL: str = "Vietnamese_Embedding"
+    EVAL_EMBEDDING_API_KEY: str = os.getenv("EVAL_EMBEDDING_API_KEY", os.getenv("EVAL_LLM_API_KEY", os.getenv("FPT_API_KEY", os.getenv("OPENAI_API_KEY", ""))))
+    EVAL_EMBEDDING_BASE_URL: str = os.getenv("EVAL_EMBEDDING_BASE_URL", os.getenv("EVAL_LLM_BASE_URL", "https://mkp-api.fptcloud.com/v1"))
+
+    # Evaluation Performance & Rate Limiting
+    EVAL_MAX_CONCURRENT: int = 2  # Number of concurrent test cases (lower = safer)
+    EVAL_QUERY_TOP_K: int = 10  # Number of chunks to retrieve per query
+
+    # Results Directory
+    EVAL_RESULTS_DIR: Path = PROJECT_ROOT / "evaluation" / "results"
+
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -120,7 +143,8 @@ settings = Settings()
 
 # Ensure directories exist
 for directory in [settings.DATA_DIR, settings.DOCUMENTS_DIR,
-                  settings.EMBEDDINGS_DIR, settings.MODELS_DIR, settings.LOGS_DIR]:
+                  settings.EMBEDDINGS_DIR, settings.MODELS_DIR, settings.LOGS_DIR,
+                  settings.EVAL_RESULTS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 

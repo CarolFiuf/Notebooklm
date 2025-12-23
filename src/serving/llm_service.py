@@ -73,7 +73,7 @@ class LlamaCppService:
         # Common thinking patterns (case-insensitive):
         thinking_patterns = [
             # English thinking patterns
-            r'\n\s*Okay,\s+let[\'s]?\s+',  # "Okay, let's" or "Okay, let"
+            r'\n\s*Okay,\s+',               # "Okay," with anything after
             r'\n\s*Let\s+me\s+',            # "Let me"
             r'\n\s*I\s+need\s+to\s+',       # "I need to"
             r'\n\s*First,?\s+I\s+',         # "First, I" or "First I"
@@ -85,19 +85,50 @@ class LlamaCppService:
             r'\n\s*Okay\s+I\s+need\s+to',   # "Okay I need to"
         ]
 
-        # Find the earliest thinking pattern in the text
-        earliest_pos = len(text)
-        for pattern in thinking_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if match:
-                pos = match.start()
-                if pos < earliest_pos:
-                    earliest_pos = pos
+        # Find ALL thinking patterns and remove them iteratively
+        # Keep stripping until no more patterns found (handles repeated thinking content)
+        max_iterations = 10  # Prevent infinite loop
+        iteration = 0
+        stripped_count = 0
 
-        # If thinking pattern found, cut everything from that point
-        if earliest_pos < len(text):
-            text = text[:earliest_pos].strip()
-            logger.debug(f"✂️ Stripped thinking content starting at position {earliest_pos}")
+        # 🔍 DEBUG: Log initial text analysis
+        logger.info(f"🔍 [DEBUG] Text length before stripping: {len(text)} chars")
+        logger.info(f"🔍 [DEBUG] Last 200 chars: ...{text[-200:]}")
+
+        while iteration < max_iterations:
+            earliest_pos = len(text)
+            matched_pattern = None
+            matched_text = None
+
+            for pattern in thinking_patterns:
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if match:
+                    pos = match.start()
+                    if pos < earliest_pos:
+                        earliest_pos = pos
+                        matched_pattern = pattern
+                        matched_text = text[pos:pos+50]  # Get 50 chars for inspection
+
+            # 🔍 DEBUG: Log what was found
+            if earliest_pos < len(text):
+                logger.info(f"🔍 [Iteration {iteration + 1}] Found pattern at position {earliest_pos}")
+                logger.info(f"🔍 Pattern: {matched_pattern}")
+                logger.info(f"🔍 Matched text: {repr(matched_text)}")
+                logger.info(f"🔍 Text before match (last 100 chars): {repr(text[max(0, earliest_pos-100):earliest_pos])}")
+
+                text = text[:earliest_pos].strip()
+                stripped_count += 1
+                logger.debug(f"✂️ [Iteration {iteration + 1}] Stripped thinking at position {earliest_pos}")
+            else:
+                logger.info(f"🔍 [Iteration {iteration + 1}] No more patterns found. Stopping.")
+                break  # No more thinking patterns found
+
+            iteration += 1
+
+        if stripped_count > 0:
+            logger.info(f"✂️ Total: Stripped thinking content {stripped_count} time(s)")
+        else:
+            logger.warning("⚠️ No thinking patterns matched! Text unchanged.")
 
         # Pattern 3: If text STARTS with thinking-like content (fallback)
         # Some models might not have newlines before thinking
